@@ -55,7 +55,7 @@ export const DEFAULT_DEPAUDIT_CONFIG: DepauditConfig = {
   filePath: null,
 };
 
-export const SUPPORTED_ECOSYSTEMS = ["npm"] as const;
+export const SUPPORTED_ECOSYSTEMS = ["npm", "pip", "gomod", "cargo", "maven", "gem", "composer"] as const;
 
 export const SEVERITY_RANK: Record<Severity, number> = {
   UNKNOWN: 0,

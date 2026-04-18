@@ -2,7 +2,7 @@ import { promisify } from "node:util";
 import * as childProcess from "node:child_process";
 import { dirname } from "node:path";
 import type { Manifest } from "../types/manifest.js";
-import type { Finding, Severity } from "../types/finding.js";
+import type { Ecosystem, Finding, Severity } from "../types/finding.js";
 
 export type ExecFileFn = (
   file: string,
@@ -13,23 +13,32 @@ const defaultExecFile: ExecFileFn = promisify(childProcess.execFile) as ExecFile
 
 const CANONICAL_SEVERITIES = new Set<string>(["UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
+const OSV_ECOSYSTEM_MAP: Record<string, Ecosystem> = {
+  "npm": "npm",
+  "PyPI": "pip",
+  "Go": "gomod",
+  "crates.io": "cargo",
+  "Maven": "maven",
+  "RubyGems": "gem",
+  "Packagist": "composer",
+};
+
+function mapOsvEcosystem(osvEcosystem: string): Ecosystem {
+  const mapped = OSV_ECOSYSTEM_MAP[osvEcosystem];
+  if (!mapped) {
+    throw new Error(
+      `OsvScannerAdapter: unknown ecosystem "${osvEcosystem}" — supported: ${Object.keys(OSV_ECOSYSTEM_MAP).join(", ")}`
+    );
+  }
+  return mapped;
+}
+
 function cvssScoreToSeverity(score: number): Severity {
   if (score >= 9.0) return "CRITICAL";
   if (score >= 7.0) return "HIGH";
   if (score >= 4.0) return "MEDIUM";
   if (score > 0) return "LOW";
   return "UNKNOWN";
-}
-
-function extractCvssScore(scoreString: string): number | null {
-  // CVSS vector string contains /BV:... we extract the base score from metadata
-  // OSV uses "score" field or we parse the CVSS vector's base score.
-  // The score field in OSV severity entries is the CVSS vector string, not a number.
-  // We need to parse the CVSS vector to determine base score, but that's complex.
-  // Instead, use a heuristic: parse the AV/AC/PR/UI/S/C/I/A components.
-  // For simplicity, fall back to UNKNOWN when we can't determine the score.
-  // Real CVSS parsing is out of scope for this slice; we handle the `database_specific.severity` path first.
-  return null;
 }
 
 function deriveSeverity(vuln: {
@@ -44,16 +53,10 @@ function deriveSeverity(vuln: {
   const severityEntries = vuln.severity ?? [];
   for (const entry of severityEntries) {
     if (entry.type === "CVSS_V3" || entry.type === "CVSS_V2") {
-      // Try to extract numeric base score from the CVSS vector's overall score.
-      // OSV sometimes has a numeric score alongside; we check if the score field
-      // is actually a number-like string vs a vector string.
       const possibleNumber = parseFloat(entry.score);
       if (!isNaN(possibleNumber) && possibleNumber <= 10) {
         return cvssScoreToSeverity(possibleNumber);
       }
-      // score is a CVSS vector string — parse out component scores to approximate
-      // For this slice we do a simple approach: HIGH for any CVSS_V3 entry
-      // with I:H or C:H, otherwise MEDIUM. This is a best-effort approximation.
       if (entry.score.includes("/I:H") || entry.score.includes("/C:H")) {
         return "HIGH";
       }
@@ -107,17 +110,12 @@ export async function runOsvScanner(
   for (const result of parsed.results) {
     for (const pkg of result.packages) {
       const { name, version, ecosystem } = pkg.package;
-
-      if (ecosystem !== "npm") {
-        throw new Error(
-          `OsvScannerAdapter: unsupported ecosystem "${ecosystem}" — polyglot support lands in issue #4`
-        );
-      }
+      const mappedEcosystem = mapOsvEcosystem(ecosystem);
 
       for (const vuln of pkg.vulnerabilities) {
         findings.push({
           source: "osv",
-          ecosystem: "npm",
+          ecosystem: mappedEcosystem,
           package: name,
           version,
           findingId: vuln.id,

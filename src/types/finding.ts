@@ -1,5 +1,5 @@
 export type Severity = "UNKNOWN" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-export type Ecosystem = "npm";
+export type Ecosystem = "npm" | "pip" | "gomod" | "cargo" | "maven" | "gem" | "composer";
 export type FindingSource = "osv" | "socket";
 
 export interface Finding {

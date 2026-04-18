@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "source": { "path": "/proj/project.csproj", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "some-dotnet-pkg", "version": "1.0.0", "ecosystem": "NuGet" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-NUGET", "summary": "Test NuGet vuln", "database_specific": { "severity": "HIGH" }, "severity": [] }
+          ]
+        }
+      ]
+    }
+  ]
+}

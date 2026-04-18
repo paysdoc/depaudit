@@ -1,0 +1,6 @@
+{
+  "name": "example/vulnerable-composer",
+  "require": {
+    "symfony/http-kernel": "2.7.0"
+  }
+}

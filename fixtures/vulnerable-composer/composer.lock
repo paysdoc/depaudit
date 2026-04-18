@@ -1,0 +1,22 @@
+{
+    "_readme": ["This file is @generated automatically"],
+    "content-hash": "abc123",
+    "packages": [
+        {
+            "name": "symfony/http-kernel",
+            "version": "v2.7.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/symfony/http-kernel.git",
+                "reference": "abc123"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "",
+                "reference": "abc123",
+                "shasum": ""
+            }
+        }
+    ],
+    "packages-dev": []
+}

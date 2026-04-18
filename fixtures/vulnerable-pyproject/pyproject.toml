@@ -1,0 +1,4 @@
+[project]
+name = "vulnerable-pyproject"
+version = "1.0.0"
+dependencies = ["urllib3==1.26.4"]

@@ -1,0 +1,81 @@
+{
+  "results": [
+    {
+      "source": { "path": "/proj/package.json", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "test-npm-pkg", "version": "1.0.0", "ecosystem": "npm" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0001", "summary": "Test npm vuln", "database_specific": { "severity": "HIGH" }, "severity": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "source": { "path": "/proj/requirements.txt", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "test-pypi-pkg", "version": "2.0.0", "ecosystem": "PyPI" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0002", "summary": "Test pip vuln", "database_specific": { "severity": "MEDIUM" }, "severity": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "source": { "path": "/proj/go.mod", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "example.com/gomod-pkg", "version": "1.2.3", "ecosystem": "Go" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0003", "summary": "Test go vuln", "database_specific": { "severity": "LOW" }, "severity": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "source": { "path": "/proj/Cargo.toml", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "test-cargo-pkg", "version": "0.1.0", "ecosystem": "crates.io" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0004", "summary": "Test cargo vuln", "database_specific": { "severity": "CRITICAL" }, "severity": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "source": { "path": "/proj/pom.xml", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "com.example:maven-pkg", "version": "3.0.0", "ecosystem": "Maven" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0005", "summary": "Test maven vuln", "database_specific": { "severity": "HIGH" }, "severity": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "source": { "path": "/proj/Gemfile", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "test-gem-pkg", "version": "1.0.0", "ecosystem": "RubyGems" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0006", "summary": "Test gem vuln", "database_specific": { "severity": "MEDIUM" }, "severity": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "source": { "path": "/proj/composer.json", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "example/composer-pkg", "version": "2.0.0", "ecosystem": "Packagist" },
+          "vulnerabilities": [
+            { "id": "CVE-TEST-0007", "summary": "Test composer vuln", "database_specific": { "severity": "LOW" }, "severity": [] }
+          ]
+        }
+      ]
+    }
+  ]
+}
