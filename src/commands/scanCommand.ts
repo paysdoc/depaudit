@@ -8,6 +8,7 @@ import { lintOsvScannerConfig, lintDepauditConfig } from "../modules/linter.js";
 import { printLintResult } from "../modules/lintReporter.js";
 import { classifyFindings } from "../modules/findingMatcher.js";
 import { fetchSocketFindings, SocketAuthError, type PackageRef } from "../modules/socketApiClient.js";
+import { writeFindingsFile, checkGitignore, printGitignoreWarning, type RenderInput } from "../modules/jsonReporter.js";
 import type { ScanResult } from "../types/scanResult.js";
 import type { Manifest } from "../types/manifest.js";
 import type { Ecosystem } from "../types/finding.js";
@@ -54,6 +55,12 @@ async function extractPackagesFromManifests(manifests: Manifest[]): Promise<Pack
   return refs;
 }
 
+async function finalize(scanPath: string, input: RenderInput): Promise<void> {
+  await writeFindingsFile(scanPath, input);
+  const check = await checkGitignore(scanPath);
+  printGitignoreWarning(check);
+}
+
 export async function runScanCommand(scanPath: string): Promise<ScanResult> {
   let depauditConfig;
   try {
@@ -64,6 +71,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
         { errors: [{ severity: "error", message: err.message, line: err.line, column: err.column }], warnings: [], isClean: false },
         err.filePath
       );
+      await finalize(scanPath, { findings: [], socketAvailable: true, osvAvailable: true, generatedAt: new Date() });
       return { findings: [], socketAvailable: true, exitCode: 2 };
     }
     throw err;
@@ -78,6 +86,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
         { errors: [{ severity: "error", message: err.message, line: err.line, column: err.column }], warnings: [], isClean: false },
         err.filePath
       );
+      await finalize(scanPath, { findings: [], socketAvailable: true, osvAvailable: true, generatedAt: new Date() });
       return { findings: [], socketAvailable: true, exitCode: 2 };
     }
     throw err;
@@ -90,6 +99,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
     process.stderr.write("Lint failed — aborting scan\n");
     printLintResult(depauditLint, depauditConfig.filePath ?? ".depaudit.yml");
     printLintResult(osvLint, osvConfig.filePath ?? "osv-scanner.toml");
+    await finalize(scanPath, { findings: [], socketAvailable: true, osvAvailable: true, generatedAt: new Date() });
     return { findings: [], socketAvailable: true, exitCode: 1 };
   }
 
@@ -126,6 +136,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
   } catch (err: unknown) {
     if (err instanceof SocketAuthError) {
       process.stderr.write(`error: ${err.message}\n`);
+      await finalize(scanPath, { findings: [], socketAvailable: false, osvAvailable: true, generatedAt: new Date() });
       return { findings: [], socketAvailable: false, exitCode: 2 };
     }
     throw err;
@@ -137,6 +148,8 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
 
   const allFindings = [...osvFindings, ...socketResult.findings];
   const classified = classifyFindings(allFindings, depauditConfig, osvConfig);
+
+  await finalize(scanPath, { findings: classified, socketAvailable: socketResult.available, osvAvailable: true, generatedAt: new Date() });
 
   const newFindings = classified.filter((c) => c.category === "new").map((c) => c.finding);
   printFindings(newFindings);

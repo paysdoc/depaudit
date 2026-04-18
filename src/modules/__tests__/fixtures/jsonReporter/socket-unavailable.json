@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "scannedAt": "2026-04-18T12:00:00.000Z",
+  "sourceAvailability": {
+    "osv": "available",
+    "socket": "unavailable"
+  },
+  "classifications": [
+    "new",
+    "accepted",
+    "whitelisted",
+    "expired-accept"
+  ],
+  "counts": {
+    "new": 1,
+    "accepted": 0,
+    "whitelisted": 0,
+    "expired-accept": 0
+  },
+  "findings": [
+    {
+      "package": "semver",
+      "version": "5.7.1",
+      "ecosystem": "npm",
+      "manifestPath": "/tmp/package-lock.json",
+      "findingId": "GHSA-c2qf-rxjj-qqgw",
+      "severity": "MEDIUM",
+      "summary": "ReDoS in semver",
+      "classification": "new",
+      "source": "osv"
+    }
+  ]
+}

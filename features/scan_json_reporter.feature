@@ -117,7 +117,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     And each listed manifest pins a package with a known OSV CVE
     When I run "depaudit scan fixtures/json-polyglot"
     Then the exit code is non-zero
-    And ".depaudit/findings.json" contains a finding with "ecosystem" set to "npm" and "manifestPath" ending in "package.json"
+    And ".depaudit/findings.json" contains a finding with "ecosystem" set to "npm" and "manifestPath" ending in "package-lock.json"
     And ".depaudit/findings.json" contains a finding with "ecosystem" set to "pip" and "manifestPath" ending in "requirements.txt"
 
   # ─── Upgrade suggestion carried when available ─────────────────────────────
@@ -146,7 +146,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     And the repository's .gitignore does not exclude ".depaudit/findings.json"
     When I run "depaudit scan fixtures/json-not-gitignored"
     Then the exit code is 0
-    And stdout mentions "findings.json" and "gitignore"
+    And stderr mentions "findings.json" and "gitignore"
     And the file ".depaudit/findings.json" is written under the scanned repository
 
   @adw-8 @regression
@@ -155,7 +155,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     And the repository's .gitignore excludes ".depaudit/"
     When I run "depaudit scan fixtures/json-gitignored-dir"
     Then the exit code is 0
-    And stdout does not mention "gitignore"
+    And stderr does not mention "gitignore"
 
   @adw-8
   Scenario: Repository with no .gitignore at all emits the warning but still writes the file
@@ -163,7 +163,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     And the repository has no .gitignore
     When I run "depaudit scan fixtures/json-no-gitignore"
     Then the exit code is 0
-    And stdout mentions "findings.json" and "gitignore"
+    And stderr mentions "findings.json" and "gitignore"
     And the file ".depaudit/findings.json" is written under the scanned repository
 
   # ─── Idempotency / overwrite ───────────────────────────────────────────────

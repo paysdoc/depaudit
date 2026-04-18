@@ -67,6 +67,11 @@ function deriveSeverity(vuln: {
   return "UNKNOWN";
 }
 
+interface OsvVulnRange {
+  type: string;
+  events: Array<{ introduced?: string; fixed?: string }>;
+}
+
 interface OsvOutput {
   results: Array<{
     source: { path: string; type: string };
@@ -78,9 +83,22 @@ interface OsvOutput {
         database_specific?: { severity?: string };
         severity?: Array<{ type: string; score: string }>;
         aliases?: string[];
+        affected?: Array<{ ranges?: OsvVulnRange[] }>;
       }>;
     }>;
   }>;
+}
+
+function extractFixedVersion(vuln: { affected?: Array<{ ranges?: OsvVulnRange[] }> }): string | undefined {
+  for (const affected of (vuln.affected ?? [])) {
+    for (const range of (affected.ranges ?? [])) {
+      if (range.type !== "SEMVER" && range.type !== "ECOSYSTEM") continue;
+      for (const event of range.events) {
+        if (event.fixed) return event.fixed;
+      }
+    }
+  }
+  return undefined;
 }
 
 export async function runOsvScanner(
@@ -93,7 +111,11 @@ export async function runOsvScanner(
 
   let stdout: string;
   try {
-    const result = await execFile("osv-scanner", ["scan", "source", "--format=json", ...dirs]);
+    // Pass --config=/dev/null to prevent osv-scanner from auto-detecting an
+    // osv-scanner.toml in the scanned directory and silently suppressing findings.
+    // Depaudit loads the config separately via loadOsvScannerConfig and applies
+    // its own classification logic (accepted / expired-accept) via classifyFindings.
+    const result = await execFile("osv-scanner", ["scan", "source", "--format=json", "--config=/dev/null", ...dirs]);
     stdout = result.stdout;
   } catch (err: unknown) {
     const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
@@ -113,6 +135,7 @@ export async function runOsvScanner(
       const mappedEcosystem = mapOsvEcosystem(ecosystem);
 
       for (const vuln of pkg.vulnerabilities) {
+        const fixedIn = extractFixedVersion(vuln);
         findings.push({
           source: "osv",
           ecosystem: mappedEcosystem,
@@ -122,6 +145,7 @@ export async function runOsvScanner(
           severity: deriveSeverity(vuln),
           summary: vuln.summary,
           manifestPath: result.source.path,
+          ...(fixedIn ? { fixedIn } : {}),
         });
       }
     }

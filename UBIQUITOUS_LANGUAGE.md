@@ -41,6 +41,7 @@
 | **`ConfigLoader`** | Deep module that parses and validates `.depaudit.yml` and `osv-scanner.toml` | config parser |
 | **`Linter`** | Pure function from parsed configs to a list of lint errors; enforces all schema and policy rules | validator |
 | **`FindingMatcher`** | Pure function that classifies each Finding against the Acceptance Register into `new`, `accepted`, `whitelisted`, `expired-accept` | classifier, matcher |
+| **`JsonReporter`** | Deep module that renders the scan's classified Findings as `.depaudit/findings.json`, the snapshot consumed by `/depaudit-triage` | JSON reporter |
 | **`OsvScannerAdapter`** | Deep module that shells out to the `osv-scanner` binary and normalizes output to the internal `Finding` type | OSV adapter |
 | **`SocketApiClient`** | Deep module that calls Socket.dev REST API with retry, fail-open on error, and normalizes to `Finding` | Socket client |
 | **`StateTracker`** | Deep module that tracks PR-level state for comment deduplication and first-failure Slack notification | state manager |

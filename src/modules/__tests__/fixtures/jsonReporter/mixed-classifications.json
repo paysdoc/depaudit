@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "scannedAt": "2026-04-18T12:00:00.000Z",
+  "sourceAvailability": {
+    "osv": "available",
+    "socket": "available"
+  },
+  "classifications": [
+    "new",
+    "accepted",
+    "whitelisted",
+    "expired-accept"
+  ],
+  "counts": {
+    "new": 1,
+    "accepted": 1,
+    "whitelisted": 1,
+    "expired-accept": 1
+  },
+  "findings": [
+    {
+      "package": "urllib3",
+      "version": "1.26.4",
+      "ecosystem": "pip",
+      "manifestPath": "/tmp/requirements.txt",
+      "findingId": "GHSA-foo-bar-baz",
+      "severity": "MEDIUM",
+      "summary": null,
+      "classification": "accepted",
+      "source": "osv"
+    },
+    {
+      "package": "ms",
+      "version": "2.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/tmp/package-lock.json",
+      "findingId": "deprecated",
+      "severity": "HIGH",
+      "summary": null,
+      "classification": "expired-accept",
+      "source": "socket"
+    },
+    {
+      "package": "semver",
+      "version": "5.7.1",
+      "ecosystem": "npm",
+      "manifestPath": "/tmp/package-lock.json",
+      "findingId": "GHSA-c2qf-rxjj-qqgw",
+      "severity": "MEDIUM",
+      "summary": null,
+      "classification": "new",
+      "source": "osv",
+      "upgrade": {
+        "suggestedVersion": "5.7.2"
+      }
+    },
+    {
+      "package": "requests",
+      "version": "2.6.0",
+      "ecosystem": "pip",
+      "manifestPath": "/tmp/requirements.txt",
+      "findingId": "install-scripts",
+      "severity": "HIGH",
+      "summary": null,
+      "classification": "whitelisted",
+      "source": "socket"
+    }
+  ]
+}
