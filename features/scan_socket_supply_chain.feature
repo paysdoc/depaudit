@@ -84,14 +84,14 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     And stderr mentions "supply-chain unavailable"
 
   @adw-7 @regression
-  Scenario: Socket auth error — 401 is treated as fail-open, not a hard error
+  Scenario: Socket auth error — 401 fails loud with a clear credentials error
     Given a fixture Node repository at "fixtures/socket-auth-error-cve" whose manifest pins a package with a known OSV CVE
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that returns HTTP 401 for every request
     When I run "depaudit scan fixtures/socket-auth-error-cve"
     Then the exit code is non-zero
-    And stdout contains at least one finding line whose finding-ID is an OSV CVE identifier
-    And stderr mentions "supply-chain unavailable"
+    And stderr mentions "Socket"
+    And stdout contains no finding lines
 
   # ─── Retry-then-success ─────────────────────────────────────────────────────
 

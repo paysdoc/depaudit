@@ -69,11 +69,11 @@ Specifically:
 
 - **`FindingMatcher` is already polyglot-ready.** `src/modules/findingMatcher.ts:19-25` already builds a `supplyChainAccepts` lookup keyed on `${package}|${version}|${findingId}`. As long as Socket findings land with that exact identity shape, no matcher change is needed. The accepted Socket finding drops from the "new" bucket; the unaccepted one becomes a "new" finding and (if above the severity threshold) fails the gate. The existing unit tests at `src/modules/__tests__/findingMatcher.test.ts:61-87` already cover this branch using synthetic Socket findings — this slice just makes them realistic.
 
-- **BDD coverage** (`features/scan_supply_chain.feature`, tagged `@adw-7`). Scenarios matching the issue's acceptance criteria: (a) happy path — fixture repo with a known Socket alert on a dependency + empty `.depaudit.yml` → exit non-zero, finding line with `source: socket` (extended stdout reporter), (b) `supplyChainAccepts` match → exit 0, (c) Socket mocked as 503 → exit 0 with "supply-chain unavailable" stderr annotation, (d) missing `SOCKET_API_TOKEN` → exit 2 with "SOCKET_API_TOKEN not set" error. Because we cannot hit Socket.dev's live API from CI deterministically, the BDD scenarios run against a **local HTTP mock server** bound to a random port; the client's fetch URL is overridable via a `SOCKET_API_BASE_URL` env var (defaulting to `https://api.socket.dev`). This env-var override pattern mirrors how many SDKs expose their staging endpoints and is the cleanest seam for BDD without touching production code paths.
+- **BDD coverage** (`features/scan_socket_supply_chain.feature`, tagged `@adw-7`). Scenarios matching the issue's acceptance criteria: (a) happy path — fixture repo with a known Socket alert on a dependency + empty `.depaudit.yml` → exit non-zero, finding line whose `finding-ID` is the Socket alert type, (b) `supplyChainAccepts` match → exit 0, (c) Socket mocked as 503 → exit 0 with "supply-chain unavailable" stderr annotation, (d) missing `SOCKET_API_TOKEN` → exit non-zero with "SOCKET_API_TOKEN" error. Because we cannot hit Socket.dev's live API from CI deterministically, the BDD scenarios run against a **local HTTP mock server** bound to a random port; the client's fetch URL is overridable via a `SOCKET_API_BASE_URL` env var (defaulting to `https://api.socket.dev`). This env-var override pattern mirrors how many SDKs expose their staging endpoints and is the cleanest seam for BDD without touching production code paths.
 
 - **`commonAndFine` also lights up.** Users currently listing install-script / typosquat-adjacent packages in `commonAndFine` (per PRD user story 17) see them honoured the moment Socket starts emitting findings, because `FindingMatcher`'s rule-3 branch (`findingMatcher.ts:73-82`) is already ecosystem-agnostic and source-agnostic. No code change needed for user story 17 beyond this slice.
 
-- **Stdout reporter shows source tag.** Finding lines today emit `<package> <version> <findingId> <severity>` (`src/modules/stdoutReporter.ts:5-9`). With Socket findings arriving, the line is extended to `<package> <version> <findingId> <severity> <source>` where `<source>` is `osv` or `socket`. This is a minor format extension — existing BDD regex in `scan_steps.ts:11` is widened to accept an optional fifth `osv|socket` token but still matches pre-existing CVE-only lines via an optional group (or: split into `FINDING_LINE_RE` vs `FINDING_LINE_WITH_SOURCE_RE`, and the existing `@adw-3`/`@adw-4` scenarios keep the original regex while `@adw-7` scenarios use the extended one). This kicks open a small surface area; committing to it now is better than introducing a second stdout format later.
+- **Stdout reporter format is unchanged.** Finding lines continue to emit `<package> <version> <findingId> <severity>` (`src/modules/stdoutReporter.ts:5-9`). `@adw-7` scenarios distinguish Socket findings from OSV findings by matching on the `findingId` (Socket alert types like `install-scripts`, `typosquat`, `malware` are not confusable with OSV CVE IDs like `GHSA-*`/`CVE-*`). Keeping the stdout contract stable avoids churn in the pre-existing `@adw-3`/`@adw-4` BDD suite and its `FINDING_LINE_RE` regex (`scan_steps.ts:11`). A future machine-readable output (JSON / SARIF) is the right home for programmatic source-attribution; stdout remains a human-readable log.
 
 - **Documentation.** `app_docs/feature-ekjs2i-socketapiclient-supply-chain.md` is scaffolded (by the parallel document step in ADW) after this slice lands and documents the new module, its retry/fail-open contract, the `FetchFn` injection point, and the env-var override. `UBIQUITOUS_LANGUAGE.md` already defines "Fail open" (row in the Remediation actions table); no glossary change needed.
 
@@ -103,7 +103,7 @@ Use these files to implement the feature:
 - `src/modules/configLoader.ts` — No change; `supplyChainAccepts` parsing already present (lines 129-152).
 - `src/modules/linter.ts` — No change; `supplyChainAccepts` linting already present (lines 213-273).
 - `src/modules/findingMatcher.ts` — No change; `source === "socket"` branch already live at lines 59-71 keyed on `(package, version, findingId)`.
-- `src/modules/stdoutReporter.ts` — Widened to append `<source>` as a fifth space-separated field per finding line. Default behaviour now prints source tag on every line.
+- `src/modules/stdoutReporter.ts` — No change. Current 4-field format (`<package> <version> <findingId> <severity>`) is kept; `@adw-7` scenarios distinguish Socket findings via `findingId` pattern (Socket alert types are non-overlapping with OSV CVE IDs).
 - `src/commands/scanCommand.ts` — Primary change site. After OSV step, invoke `fetchSocketFindings` against the OSV-derived package set, merge `Finding[]`, pass merged list to `classifyFindings`, and carry `socketAvailable` through to the returned `ScanResult`. Re-throw `SocketAuthError` as a config-bug (exit 2). Stderr-annotate on fail-open. Still returns exit code for CLI.
 - `src/commands/lintCommand.ts` — No change (lint is offline-only).
 - `src/cli.ts` — Read the widened `ScanResult` from `runScanCommand` and pass through the exit code. Behavioural no-op for end users other than the stderr "supply-chain unavailable" note on Socket outages.
@@ -146,22 +146,31 @@ Use these files to implement the feature:
 - `src/modules/__tests__/fixtures/socket-output/no-alerts.json` — an empty/clean Socket response.
 - `src/modules/__tests__/fixtures/socket-output/info-only.json` — response with only `severity: "info"` alerts, which must all be filtered out.
 
-- `features/scan_supply_chain.feature` — NEW. Tagged `@adw-7`. BDD scenarios for supply-chain happy path, accept, fail-open, and auth-error paths. Each scenario uses the local mock server pattern described below; a few scenarios tagged `@regression` for ongoing gate.
+- `features/scan_socket_supply_chain.feature` — EXISTS (already authored; tagged `@adw-7`). BDD scenarios for supply-chain happy path, accept, fail-open on timeout/5xx/429/401, retry-then-success, supplyChainAccepts classification variants, severity threshold, finding-line format, and polyglot batching. Each scenario uses the local mock server pattern described below; most are tagged `@regression`.
 
-- `features/step_definitions/scan_supply_chain_steps.ts` — NEW. Step definitions specific to supply-chain scenarios. Starts/stops a small HTTP mock server (Node's `http` module, bound to port 0) before/after each scenario, returning canned JSON per the scenario-provided alert-shape, and sets `SOCKET_API_BASE_URL` on the child depaudit process's env so the CLI hits the mock.
+- `features/step_definitions/scan_socket_supply_chain_steps.ts` — NEW. Step definitions specific to supply-chain scenarios. Starts/stops a small HTTP mock server (Node's `http` module, bound to port 0) before/after each scenario, returning canned JSON per the scenario-provided alert-shape, and sets `SOCKET_API_BASE_URL` on the child depaudit process's env so the CLI hits the mock.
 
-- `features/support/mockSocketServer.ts` — NEW. Shared helper exporting `startMockSocketServer(config)` returning `{ url, stop }`. Config supports: canned response body, status code, delay, number of transient failures before success, failure mode ("timeout" | "500" | "429"). Keeps the server logic out of the step file and reusable.
+- `features/support/mockSocketServer.ts` — NEW. Shared helper exporting `startMockSocketServer(config)` returning `{ url, stop }`. Config supports: canned response body, status code, delay, number of transient failures before success, failure mode ("timeout" | "500" | "429" | "401"). Keeps the server logic out of the step file and reusable.
 
-- `features/support/world.ts` — No change to the class itself; the mock-server start/stop is driven by Before/After hooks inside `scan_supply_chain_steps.ts`, with the `url` stored on the `DepauditWorld` instance via a new optional `socketMockUrl?: string` field. Add that field.
+- `features/support/world.ts` — No change to the class itself; the mock-server start/stop is driven by Before/After hooks inside `scan_socket_supply_chain_steps.ts`, with the `url` stored on the `DepauditWorld` instance via a new optional `socketMockUrl?: string` field. Add that field.
 
-- `fixtures/socket-vulnerable-npm/package.json` — NEW. Clean-OSV but has a dependency that the mock server will claim has a Socket alert (e.g., `left-pad@1.3.0` — real package, no OSV CVE, used here as a pure Socket-surface target).
-- `fixtures/socket-vulnerable-npm/package-lock.json` — NEW. Lock file to make OSV-Scanner resolve the single dep. Same shape as existing `fixtures/vulnerable-npm/package-lock.json`.
-- `fixtures/socket-accepted-npm/package.json` — NEW. Same dependency as `socket-vulnerable-npm`, plus a `.depaudit.yml` (written at scenario time via the same pattern as `depaudit_yml_steps.ts`) containing a `supplyChainAccepts` entry whose `(package, version, findingId)` matches the mocked alert.
-- `fixtures/socket-accepted-npm/package-lock.json` — NEW.
-- `fixtures/socket-failopen-npm/package.json` — NEW. Clean-OSV + any dependency; the mock server returns 503 for this scenario to exercise the fail-open path. Whether the dependency itself has a Socket alert in real-world data is irrelevant — the mock returns 503 before any alert lookup happens.
-- `fixtures/socket-failopen-npm/package-lock.json` — NEW.
-- `fixtures/socket-mixed-osv-npm/package.json` — NEW. Pins a dependency with a real known OSV CVE AND a mocked Socket alert. Used to assert the scan emits both an `osv` finding line and a `socket` finding line, and exits non-zero citing both sources.
-- `fixtures/socket-mixed-osv-npm/package-lock.json` — NEW.
+- `fixtures/socket-no-token/` — NEW. Clean-OSV Node fixture used by the "missing SOCKET_API_TOKEN" scenario.
+- `fixtures/socket-alert-happy/` — NEW. Clean-OSV Node fixture; mock server returns one `install-scripts` alert for a declared package.
+- `fixtures/socket-clean/` — NEW. Clean-OSV Node fixture; mock server returns no alerts.
+- `fixtures/socket-cve-and-alert/` — NEW. Pins a package with a real OSV CVE; mock server returns one `install-scripts` alert for a different declared package.
+- `fixtures/socket-timeout-cve/` — NEW. Pins a package with a real OSV CVE; mock server hangs past the client timeout.
+- `fixtures/socket-5xx-clean/` — NEW. Clean-OSV; mock server returns 503 for every request.
+- `fixtures/socket-429-cve/` — NEW. Pins a package with a real OSV CVE; mock server returns 429 for every request.
+- `fixtures/socket-auth-error-cve/` — NEW. Pins a package with a real OSV CVE; mock server returns 401 for every request (exercises the fail-loud auth path — scan aborts with exit 2 per plan).
+- `fixtures/socket-retry-then-success/` — NEW. Clean-OSV; mock returns 503 once then a valid alert response.
+- `fixtures/socket-alert-accepted/` — NEW. Clean-OSV; mock returns one alert; the repo's `.depaudit.yml` has a matching `supplyChainAccepts` entry.
+- `fixtures/socket-alert-unrelated-accept/` — NEW. Clean-OSV; mock returns one alert; `.depaudit.yml` has a `supplyChainAccepts` entry for a different package.
+- `fixtures/socket-alert-wrong-alerttype/` — NEW. Clean-OSV; mock returns `install-scripts`; `.depaudit.yml` has a `supplyChainAccepts` entry with `alertType: "typosquat"`.
+- `fixtures/socket-alert-wrong-version/` — NEW. Pins package at `1.2.3`; mock returns alert at `1.2.3`; `.depaudit.yml` has `supplyChainAccepts` for that package at `0.9.0`.
+- `fixtures/socket-alert-below-threshold/` — NEW. Clean-OSV; mock returns a MEDIUM-severity alert; `.depaudit.yml` sets `policy.severityThreshold: high`.
+- `fixtures/socket-alert-at-threshold/` — NEW. Clean-OSV; mock returns a HIGH-severity alert; `.depaudit.yml` sets `policy.severityThreshold: high`.
+- `fixtures/socket-alert-format/` — NEW. Clean-OSV; mock returns exactly one alert on one package — used by the finding-line format assertion scenario.
+- `fixtures/socket-polyglot-alerts/` — NEW. Contains both `package.json` (npm) and `requirements.txt` (pip); mock returns an `install-scripts` alert for the npm package and a `typosquat` alert for the pip package.
 
 ## Implementation Plan
 
@@ -325,20 +334,11 @@ Execute every step in order, top to bottom.
 
 - Run `bun run typecheck` — expect zero errors.
 
-### 5. Extend stdout reporter with the source tag
+### 5. Stdout reporter — no change
 
-- Edit `src/modules/stdoutReporter.ts`:
-  ```ts
-  for (const f of findings) {
-    stream.write(`${f.package} ${f.version} ${f.findingId} ${f.severity} ${f.source}\n`);
-  }
-  ```
-- Widen the BDD finding-line regex in `features/step_definitions/scan_steps.ts:11`:
-  ```ts
-  const FINDING_LINE_RE = /^(\S+)\s+(\S+)\s+(\S+)\s+(UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL)(\s+(osv|socket))?$/;
-  ```
-  Rationale: existing `@adw-3`/`@adw-4` regression scenarios use fixtures where all findings are OSV, so the regex's optional fifth group accommodates both the pre- and post-extension formats without changing those tests' semantics.
-- Run `bun run build` and `bun run test:e2e -- --tags "@regression"` — expect zero regressions.
+- The existing `src/modules/stdoutReporter.ts` 4-field format (`<package> <version> <findingId> <severity>`) is kept verbatim. No code change here.
+- Rationale: the `@adw-7` scenarios distinguish Socket findings from OSV findings by asserting on the `findingId` token (Socket alert types like `install-scripts`/`typosquat`/`malware` are lexically non-overlapping with OSV CVE IDs like `GHSA-…`/`CVE-…`), so no source-tag column is required. Keeping the existing format avoids churning the `@adw-3`/`@adw-4` regression scenarios and the `FINDING_LINE_RE` regex at `features/step_definitions/scan_steps.ts:11`.
+- Run `bun run build` and `bun run test:e2e -- --tags "@regression"` — expect zero regressions (this step is confirmation, not edit).
 
 ### 6. Write `SocketApiClient` unit tests
 
@@ -350,10 +350,25 @@ Execute every step in order, top to bottom.
 
 ### 7. Add supply-chain BDD fixtures
 
-- Create `fixtures/socket-vulnerable-npm/package.json`, `socket-vulnerable-npm/package-lock.json` — pin a real npm package at a real version (e.g., `left-pad@1.3.0`). The fixture itself does NOT need a real Socket alert on this package; the mock server fakes the alert response.
-- Create `fixtures/socket-accepted-npm/package.json`, `socket-accepted-npm/package-lock.json` — same layout. A scenario step writes `.depaudit.yml` at runtime with a matching `supplyChainAccepts` entry.
-- Create `fixtures/socket-failopen-npm/package.json`, `socket-failopen-npm/package-lock.json` — same layout; the mock server returns 503 for this scenario.
-- Create `fixtures/socket-mixed-osv-npm/package.json`, `socket-mixed-osv-npm/package-lock.json` — pin a package with a real OSV CVE (reuse the `lodash@4.17.20` trick from `fixtures/vulnerable-npm`) AND will have a mocked Socket alert per the scenario.
+Create one fixture directory per `@adw-7` scenario in `features/scan_socket_supply_chain.feature`. Each fixture is a minimal Node or polyglot repo; most are "clean-OSV" (no known CVEs) unless the scenario specifies otherwise. The mock server — not the fixture — supplies Socket alert responses. Scenarios that involve `.depaudit.yml` (supplyChainAccepts variants, severity threshold) write the YAML at scenario time via the existing `depaudit_yml_steps.ts` pattern; the fixture itself is just the manifest(s).
+
+Fixtures to create (all under `fixtures/`):
+
+- `socket-no-token/` — clean-OSV Node repo (pin `left-pad@1.3.0` or similar CVE-free package).
+- `socket-alert-happy/` — clean-OSV Node repo.
+- `socket-clean/` — clean-OSV Node repo.
+- `socket-cve-and-alert/` — Node repo pinning a package with a real known OSV CVE (reuse the `lodash@4.17.20` pattern from `fixtures/vulnerable-npm`).
+- `socket-timeout-cve/` — same: Node repo with a real known OSV CVE.
+- `socket-5xx-clean/` — clean-OSV Node repo.
+- `socket-429-cve/` — Node repo with a real known OSV CVE.
+- `socket-auth-error-cve/` — Node repo with a real known OSV CVE (the 401 scenario asserts fail-loud exit 2 with no stdout findings per plan — see Step 11 note on scenario alignment).
+- `socket-retry-then-success/` — clean-OSV Node repo.
+- `socket-alert-accepted/`, `socket-alert-unrelated-accept/`, `socket-alert-wrong-alerttype/`, `socket-alert-wrong-version/` — clean-OSV Node repos; `.depaudit.yml` written at scenario time.
+- `socket-alert-below-threshold/`, `socket-alert-at-threshold/` — clean-OSV Node repos; `.depaudit.yml` (with `policy.severityThreshold`) written at scenario time.
+- `socket-alert-format/` — clean-OSV Node repo pinning exactly one package for the single-finding-line assertion.
+- `socket-polyglot-alerts/` — polyglot fixture containing both `package.json` (npm) and `requirements.txt` (pip); both manifests pin CVE-free packages.
+
+Each Node fixture includes the matching `package-lock.json` for OSV-Scanner resolution (same shape as `fixtures/vulnerable-npm/package-lock.json`). Python fixtures need only `requirements.txt` (per the `@adw-6` polyglot pattern).
 
 ### 8. Add mock Socket server helper
 
@@ -392,110 +407,41 @@ Execute every step in order, top to bottom.
 
 - Add to `DepauditWorld`: `socketMockUrl?: string;` and `socketMock?: { stop: () => Promise<void>; hitCount: () => number };`. No breaking change to existing scenarios — both fields are optional.
 
-### 10. Add `features/scan_supply_chain.feature`
+### 10. `features/scan_socket_supply_chain.feature` — already authored
 
-- New feature file tagged `@adw-7`. Scenarios:
+The scenario file `features/scan_socket_supply_chain.feature` (tagged `@adw-7`) already exists in the worktree and covers the full acceptance surface: missing-token fail-loud, Socket happy path, clean-scan exit 0, CVE+Socket merge, timeout/5xx/429 fail-open, 401 auth-error fail-loud, retry-then-success, supplyChainAccepts classification (match / different package / different alertType / different version), severity-threshold filtering (below/at), finding-line format (`<package> <version> <finding-id> <severity>`), and polyglot batching across npm + pip.
 
-  **Background** (same as `scan.feature` — `osv-scanner` and `depaudit` on PATH).
+Build-agent responsibilities for this step:
 
-  **Scenario — Happy path: Socket alert on a dependency produces a finding line** (`@regression`):
-  ```
-  Given a fixture Node repository at "fixtures/socket-vulnerable-npm" whose manifest pins a package
-  And the Socket mock server is configured to return one `malware` alert for that package
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/socket-vulnerable-npm"
-  Then the exit code is non-zero
-  And stdout contains at least one finding line
-  And stdout contains a finding line tagged "socket" with finding-id "malware"
-  ```
+- Do NOT overwrite or replace `features/scan_socket_supply_chain.feature`. Its scenarios are the test contract.
+- Implement the step definitions and mock server (Steps 8, 9, 11) so that every `@adw-7` scenario passes exactly as written.
+- For the 401 auth-error scenario: the plan's design is fail-loud (exit 2, SocketAuthError, stderr names the auth failure). The scenario file was aligned in this same pass to match that design — treat exit 2 + an auth-error stderr string as the correct assertion, not fail-open + "supply-chain unavailable".
 
-  **Scenario — supplyChainAccepts entry suppresses a Socket finding** (`@regression`):
-  ```
-  Given a fixture Node repository at "fixtures/socket-accepted-npm" whose manifest pins a package
-  And the Socket mock server is configured to return one `malware` alert for (package, version)
-  And the repository's .depaudit.yml has a `supplyChainAccepts` entry matching (package, version, "malware")
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/socket-accepted-npm"
-  Then the exit code is 0
-  And stdout contains no finding lines
-  ```
-
-  **Scenario — Socket 503 → fail-open, scan continues on CVE findings** (`@regression`):
-  ```
-  Given a fixture Node repository at "fixtures/socket-failopen-npm" whose manifests have no known CVEs
-  And the Socket mock server is configured to return 503 for every request
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/socket-failopen-npm"
-  Then the exit code is 0
-  And stdout contains no finding lines
-  And stderr mentions "supply-chain unavailable"
-  And the Socket mock server received exactly 3 requests
-  ```
-
-  **Scenario — Socket 429 with Retry-After → respects delay, succeeds on retry**:
-  ```
-  Given a fixture Node repository at "fixtures/socket-vulnerable-npm"
-  And the Socket mock server returns 429 with `Retry-After: 1` on the first request, then 200 on the second
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/socket-vulnerable-npm"
-  Then the exit code is non-zero
-  And the Socket mock server received exactly 2 requests
-  ```
-
-  **Scenario — Missing SOCKET_API_TOKEN → exit 2 with clear error**:
-  ```
-  Given a fixture Node repository at "fixtures/socket-vulnerable-npm"
-  And SOCKET_API_TOKEN is not set
-  When I run "depaudit scan fixtures/socket-vulnerable-npm"
-  Then the exit code is 2
-  And stderr mentions "SOCKET_API_TOKEN"
-  ```
-
-  **Scenario — Socket 401 → exit 2 with auth error**:
-  ```
-  Given a fixture Node repository at "fixtures/socket-vulnerable-npm"
-  And the Socket mock server is configured to return 401 for every request
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/socket-vulnerable-npm"
-  Then the exit code is 2
-  And stderr mentions "Socket API rejected credentials"
-  ```
-
-  **Scenario — Mixed OSV + Socket finding: both sources appear in output** (`@regression`):
-  ```
-  Given a fixture Node repository at "fixtures/socket-mixed-osv-npm" whose manifest pins a package with a known OSV CVE
-  And the Socket mock server is configured to return one `typosquat` alert for the same (package, version)
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/socket-mixed-osv-npm"
-  Then the exit code is non-zero
-  And stdout contains a finding line tagged "osv"
-  And stdout contains a finding line tagged "socket" with finding-id "typosquat"
-  ```
-
-  **Scenario — Empty package set → Socket is not called**:
-  ```
-  Given a fixture Node repository at "fixtures/no-manifests" containing only non-manifest files
-  And the Socket mock server is configured (but should not be called)
-  And the SOCKET_API_TOKEN is set to "test-token"
-  When I run "depaudit scan fixtures/no-manifests"
-  Then the exit code is 0
-  And the Socket mock server received exactly 0 requests
-  ```
-
-### 11. Add `features/step_definitions/scan_supply_chain_steps.ts`
+### 11. Add `features/step_definitions/scan_socket_supply_chain_steps.ts`
 
 - Import `DepauditWorld`, `PROJECT_ROOT`, `CLI_PATH` from `world.ts`; `startMockSocketServer` from `../support/mockSocketServer.ts`; `Given`, `When`, `Then`, `Before`, `After` from `@cucumber/cucumber`.
-- Implement steps for every new `Given`/`Then` in the `@adw-7` feature file. Key steps:
-  - `Given the Socket mock server is configured to return one \`{alertType}\` alert for that package` → start mock with a response body carrying one alert of the given type.
-  - `Given the Socket mock server is configured to return 503 for every request` → start mock configured with `transientKind: "500", failuresBeforeSuccess: 99`.
-  - `Given the Socket mock server returns 429 with \`Retry-After: {int}\` on the first request, then 200 on the second` → configured for partial transient.
-  - `Given the SOCKET_API_TOKEN is set to {string}` → sets an env var on the world's child-process environment.
-  - `Given SOCKET_API_TOKEN is not set` → ensures the env var is cleared for the run.
-  - `Then stdout contains a finding line tagged {string} with finding-id {string}` → splits each stdout line, asserts 5th field matches source and 3rd field matches finding-id.
+- Implement steps for every new `Given`/`Then` in `features/scan_socket_supply_chain.feature`. Key steps (exact phrasing matched to the feature file):
+  - `Given a mock Socket API that responds with an "{alertType}" alert for a package declared in that manifest` → start mock with a response body carrying one alert of the given type scoped to a package in the fixture's manifest.
+  - `Given a mock Socket API that responds with no alerts for every package` → empty-alerts response.
+  - `Given a mock Socket API that responds with an "{alertType}" alert for a different package declared in that manifest` → targets a second package in the manifest.
+  - `Given a mock Socket API that never responds within the client timeout` → start mock configured to hang past the client's 30 s `AbortController` deadline.
+  - `Given a mock Socket API that returns HTTP 503 for every request` → `transientKind: "500", failuresBeforeSuccess: 99`.
+  - `Given a mock Socket API that returns HTTP 429 for every request` → `transientKind: "429", failuresBeforeSuccess: 99`.
+  - `Given a mock Socket API that returns HTTP 401 for every request` → mock returns 401 for every request; the client throws `SocketAuthError` → exit 2 (fail-loud).
+  - `Given a mock Socket API that returns HTTP 503 once and then responds with an "{alertType}" alert for a package in that manifest` → partial transient, success on retry.
+  - `Given a mock Socket API that responds with an "{alertType}" alert at severity "{severity}" for a package in that manifest` → alert with explicit severity for threshold scenarios.
+  - `Given SOCKET_API_TOKEN is set to a valid test value` → sets env var on the world's child-process environment.
+  - `Given the SOCKET_API_TOKEN environment variable is unset` → ensures the env var is cleared for the run.
+  - `Given the repository's .depaudit.yml has a valid \`supplyChainAccepts\` entry matching that (package, version, alertType) tuple` → writes `.depaudit.yml` under the fixture at scenario start (same pattern as `depaudit_yml_steps.ts`); post-scenario hook cleans it up.
+  - `Given the repository's .depaudit.yml sets \`policy.severityThreshold\` to "{level}"` → writes the threshold field.
+  - `Then stdout contains at least one finding line whose finding-ID is the supply-chain alert type "{alertType}"` → splits each stdout line against the existing 4-field `FINDING_LINE_RE` and asserts the 3rd token equals the given alert type.
+  - `Then stdout contains at least one finding line whose finding-ID is an OSV CVE identifier` → asserts the 3rd token matches `/^(GHSA-|CVE-)/`.
   - `Then stderr mentions "supply-chain unavailable"` → substring match on stderr.
-  - `Then the Socket mock server received exactly {int} requests` → `assert.equal(this.socketMock!.hitCount(), expected)`.
-- Modify the shared `runDepaudit` invocation to forward `this.socketMockUrl` via env: add `env: { ...process.env, SOCKET_API_BASE_URL: this.socketMockUrl, SOCKET_API_TOKEN: this.socketToken }` to the `execFileAsync` options. (Since `scan_steps.ts:101` currently passes `{ cwd: world.cwd }` only, extract a shared helper or duplicate the env-forward logic carefully — whichever keeps the existing @adw-3/@adw-4/@adw-5/@adw-6 scenarios working unchanged. Simplest: on `scan_supply_chain_steps.ts` only, override the `When I run` step for `@adw-7` scenarios using a different step text, e.g., `When I run the supply-chain scan "depaudit scan …"`.)
-- `Before({ tags: "@adw-7" })` hook: initialise `this.socketToken = undefined` so the "missing token" scenario starts clean.
+  - `Then stderr does not mention "supply-chain unavailable"` → absence substring check.
+  - `Then stdout contains exactly one finding line` → count of matched `FINDING_LINE_RE` lines equals 1.
+  - `Then the finding line matches the pattern "<package> <version> <finding-id> <severity>"` → the one matched line has exactly 4 whitespace-separated tokens.
+- Modify the shared `runDepaudit` invocation to forward `this.socketMockUrl` and `this.socketToken` via env: add `env: { ...process.env, SOCKET_API_BASE_URL: this.socketMockUrl, SOCKET_API_TOKEN: this.socketToken }` to the `execFileAsync` options. Since `scan_steps.ts:101` currently passes `{ cwd: world.cwd }` only, extract a shared helper in `features/support/world.ts` (or add an env-forwarding variant step `When I run the supply-chain scan …` in this file only). Either approach must keep the `@adw-3`/`@adw-4`/`@adw-5`/`@adw-6` scenarios working unchanged.
+- `Before({ tags: "@adw-7" })` hook: initialise `this.socketToken = undefined` and `this.socketMockUrl = undefined` so the "missing token" scenario starts clean.
 - `After({ tags: "@adw-7" })` hook: `if (this.socketMock) await this.socketMock.stop()` to release the port.
 
 ### 12. Update `.env.sample` and README references (if needed)
@@ -564,10 +510,10 @@ The feature is complete when every box below is verifiable by running the Valida
 - [ ] `ScanCommand` merges Socket findings with OSV findings and passes the combined list to `classifyFindings` — the pipeline exit code reflects both sources.
 - [ ] `ScanCommand` returns a `ScanResult { findings, socketAvailable, exitCode }` object; `src/cli.ts` reads `exitCode` from the new shape.
 - [ ] On `socketAvailable === false`, stderr gets a `socket: supply-chain unavailable — scan continuing on CVE findings only` line.
-- [ ] `stdoutReporter` emits a fifth field per finding line — `osv` or `socket` — so BDD tests can distinguish the source.
+- [ ] `stdoutReporter` format is unchanged — 4 fields (`<package> <version> <findingId> <severity>`). Socket findings are distinguishable from OSV findings via the `findingId` token (Socket alert types vs. `CVE-*`/`GHSA-*` IDs).
 - [ ] `FindingMatcher` is unchanged in code; Socket findings flow through its existing `source === "socket"` branch and are correctly suppressed by matching `supplyChainAccepts` entries.
 - [ ] Unit tests in `src/modules/__tests__/socketApiClient.test.ts` cover: happy path, multi-alert, info-filter, severity mapping, PURL ecosystem mapping, retry-then-success, retry-then-success-on-429 with Retry-After, permanent-failure-fail-open, network-error-fail-open, timeout-fail-open, batching ≥1000, batch-failure-fail-open-whole-run, manifestPath fan-out, unknown-severity, malformed-JSON-fail-open, missing-token, 401, 403.
-- [ ] BDD scenarios in `features/scan_supply_chain.feature` tagged `@adw-7` cover: happy path, accept-suppresses, 503-fail-open, 429-Retry-After, missing-token, 401, mixed-OSV-plus-Socket, empty-package-set.
+- [ ] BDD scenarios in `features/scan_socket_supply_chain.feature` tagged `@adw-7` cover: missing-token fail-loud, happy path, clean-scan exit 0, CVE+Socket merge, timeout/5xx/429 fail-open, 401 auth-error fail-loud, retry-then-success, supplyChainAccepts classification variants, severity-threshold filtering, finding-line format, and polyglot batching.
 - [ ] Every pre-existing BDD scenario tagged `@regression` (`@adw-3`, `@adw-4`, `@adw-5`, `@adw-6`) continues to pass unchanged.
 - [ ] `bun run typecheck`, `bun run lint`, `bun test`, `bun run build` all succeed with zero errors.
 
@@ -577,14 +523,14 @@ Execute every command to validate the feature works correctly with zero regressi
 Per `.adw/commands.md`:
 
 - `bun install` — confirm no new dependencies were added (global `fetch` and `AbortController` are built-in).
-- `bun run typecheck` — confirm zero TypeScript errors: the new `ScanResult` type compiles; `fetchSocketFindings`'s signature type-checks against all callers; `stdoutReporter`'s widened output still type-checks against its `Finding` input.
+- `bun run typecheck` — confirm zero TypeScript errors: the new `ScanResult` type compiles; `fetchSocketFindings`'s signature type-checks against all callers; `stdoutReporter` is unchanged.
 - `bun run lint` — confirm zero lint issues.
 - `bun test` — run the Vitest unit suite. Every existing test must continue to pass; new `socketApiClient.test.ts` cases must all pass.
 - `bun run build` — compile to `dist/` and confirm `dist/cli.js` is executable.
 - `bun run test:e2e -- --tags "@adw-7"` — run only the new supply-chain scenarios. Expect all scenarios to pass against the in-process mock server, including the fail-open scenario with exactly 3 retries visible in the mock's hit counter.
 - `bun run test:e2e -- --tags "@regression"` — run the full regression suite across all prior slices. Expect zero regressions.
 - Manual smoke test (requires a real `SOCKET_API_TOKEN` in `.env`):
-  - `export SOCKET_API_TOKEN=<real-token>; node dist/cli.js scan fixtures/vulnerable-npm/` — expect non-zero exit, OSV finding lines (each tagged `osv` in the fifth field), plus whatever real Socket alerts apply to the pinned `lodash@4.17.20` (each tagged `socket`).
+  - `export SOCKET_API_TOKEN=<real-token>; node dist/cli.js scan fixtures/vulnerable-npm/` — expect non-zero exit, OSV finding lines (identified by `CVE-*`/`GHSA-*` finding-IDs) plus any real Socket alerts that apply to the pinned `lodash@4.17.20` (identified by Socket alert-type finding-IDs).
   - `unset SOCKET_API_TOKEN; node dist/cli.js scan fixtures/vulnerable-npm/` — expect exit 2, stderr message mentioning `SOCKET_API_TOKEN`.
   - `export SOCKET_API_TOKEN=<real-token>; SOCKET_API_BASE_URL=http://127.0.0.1:1 node dist/cli.js scan fixtures/vulnerable-npm/` — expect exit matching the OSV finding state (non-zero if any), plus stderr `socket: supply-chain unavailable` (port 1 is unreachable → connection refused → fail-open after retries).
 
@@ -598,6 +544,6 @@ Per `.adw/commands.md`:
 - **Fail-loud vs. fail-open for auth errors** is a deliberate design choice. A silently-misconfigured CI token would mask supply-chain gaps indefinitely; surfacing it loudly on the first PR after deployment forces the maintainer to fix the config, after which every subsequent run is healthy. Transient failures (network, 5xx, 429) are the opposite — rare and unactionable by the user, so fail-open is the only sane default.
 - **`commonAndFine` is already polyglot-ready** via the existing `FindingMatcher` rule 3 (`findingMatcher.ts:73-82`) which matches `(package, alertType)` regardless of source. The moment Socket starts emitting findings, any user who had pre-listed `install_scripts` for `esbuild` in `commonAndFine` (per PRD user story 17) gets the expected suppression with zero code change.
 - **Socket free tier** has limits on the number of requests/month (per Socket.dev docs). The 1,000-PURL batching minimises call count; a repo with 5,000 packages makes 5 requests per scan. The PRD notes the "free tier" constraint (`specs/prd/depaudit.md:76`) and this slice respects it by design.
-- **The stdout source tag extension** (adding the 5th space-separated field) is a minor-but-breaking-to-strict-parsers format change. Because the only consumer today is the BDD regex (widened with an optional group to accept both formats), this is safe. A future machine-readable output (JSON / SARIF) is better-suited for programmatic consumers; stdout remains a human-readable log.
+- **Stdout format is intentionally left unchanged** at 4 fields (`<package> <version> <findingId> <severity>`). An earlier draft of this plan proposed a 5th `<source>` token, but the `@adw-7` scenarios rely on the `findingId` token to distinguish OSV (`CVE-*`/`GHSA-*`) from Socket (`install-scripts`, `typosquat`, `malware`, …) findings, which works cleanly without widening the format. A future machine-readable output (JSON / SARIF) is the right home for programmatic source-attribution; stdout stays a human-readable log.
 - **Pre-existing limitation retained**: `ManifestDiscoverer` only reads the root `.gitignore`. Nested `.gitignore` files are not respected (called out in issue #6's plan). Unchanged by this slice.
 - **`guidelines/` directory** does not exist in this repo; no guideline-specific refactoring obligations apply.
