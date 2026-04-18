@@ -1,0 +1,5 @@
+version: 1
+policy:
+  severityThreshold: medium
+  key: {unclosed: mapping
+  another: field

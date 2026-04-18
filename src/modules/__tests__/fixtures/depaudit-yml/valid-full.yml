@@ -1,0 +1,17 @@
+version: 1
+policy:
+  severityThreshold: medium
+  ecosystems: auto
+  maxAcceptDays: 90
+  maxCommonAndFineDays: 365
+commonAndFine:
+  - package: lodash
+    alertType: protestware
+    expires: "{{EXPIRES_60D}}"
+    reason: Category-wide exemption approved
+supplyChainAccepts:
+  - package: lodash
+    version: "4.17.20"
+    findingId: GHSA-test-1234
+    expires: "{{EXPIRES_30D}}"
+    reason: "upstream fix pending in next major release cycle"

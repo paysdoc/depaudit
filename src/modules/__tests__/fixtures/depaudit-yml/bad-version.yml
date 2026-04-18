@@ -1,0 +1,8 @@
+version: 2
+policy:
+  severityThreshold: medium
+  ecosystems: auto
+  maxAcceptDays: 90
+  maxCommonAndFineDays: 365
+commonAndFine: []
+supplyChainAccepts: []

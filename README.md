@@ -36,14 +36,16 @@ fixtures/                # Fixture repos for e2e tests
 specs/
   prd/
     depaudit.md          # Full product requirements document
+  issue-*.md             # Per-issue ADW plan specs
   patch/                 # Patch specs for incremental fixes
 src/
   cli.ts                 # CLI entry point
   commands/
     scanCommand.ts       # ScanCommand composition root
-  modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, etc.)
+    lintCommand.ts       # LintCommand composition root
+  modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, ConfigLoader, Linter, etc.)
     __tests__/           # Unit tests with fixture data
-  types/                 # Shared domain types (Finding, Manifest)
+  types/                 # Shared domain types (Finding, Manifest, OsvScannerConfig)
 .env.sample              # Environment variable template
 UBIQUITOUS_LANGUAGE.md   # Domain glossary
 cucumber.js              # Cucumber e2e runner config
