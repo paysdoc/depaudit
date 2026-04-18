@@ -1,0 +1,23 @@
+version: 1
+policy:
+  severityThreshold: medium
+  ecosystems: auto
+  maxAcceptDays: 90
+  maxCommonAndFineDays: 365
+commonAndFine: []
+supplyChainAccepts:
+  - package: "lodash"
+    version: "4.17.21"
+    findingId: "install-scripts"
+    expires: "2027-01-01"
+    reason: "Known dev toolchain dependency - upstream fix pending"
+  - package: "ghost-pkg"
+    version: "9.9.9"
+    findingId: "malware"
+    expires: "2027-01-01"
+    reason: "This is the orphan entry to be removed"
+  - package: "ms"
+    version: "2.1.3"
+    findingId: "deprecated"
+    expires: "2027-01-01"
+    reason: "Package deprecated but still in use"

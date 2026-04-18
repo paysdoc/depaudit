@@ -115,6 +115,11 @@ export async function runDepaudit(world: DepauditWorld, args: string[]): Promise
   if (world.socketRequestTimeoutMs !== undefined) {
     env["SOCKET_REQUEST_TIMEOUT_MS"] = String(world.socketRequestTimeoutMs);
   }
+  // Prepend fake osv-scanner bin dir to PATH for OSV failure simulation (@adw-13)
+  if (world.fakeOsvBinDir !== undefined) {
+    const existingPath = env["PATH"] ?? "";
+    env["PATH"] = `${world.fakeOsvBinDir}:${existingPath}`;
+  }
 
   // For scenarios that don't configure socket (e.g. regression tests), if no
   // SOCKET_API_TOKEN is available in env, spin up a no-op mock so the CLI

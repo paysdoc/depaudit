@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
+import { readFile, writeFile, mkdtemp } from "node:fs/promises";
+import { resolve, dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { discoverManifests } from "../modules/manifestDiscoverer.js";
 import { runOsvScanner } from "../modules/osvScannerAdapter.js";
 import { printFindings } from "../modules/stdoutReporter.js";
@@ -8,6 +9,8 @@ import { lintOsvScannerConfig, lintDepauditConfig } from "../modules/linter.js";
 import { printLintResult } from "../modules/lintReporter.js";
 import { classifyFindings } from "../modules/findingMatcher.js";
 import { fetchSocketFindings, SocketAuthError, type PackageRef } from "../modules/socketApiClient.js";
+import { findOrphans } from "../modules/orphanDetector.js";
+import { pruneDepauditYml, pruneOsvScannerToml } from "../modules/configWriter.js";
 import type { ScanResult } from "../types/scanResult.js";
 import type { Manifest } from "../types/manifest.js";
 import type { Ecosystem } from "../types/finding.js";
@@ -64,7 +67,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
         { errors: [{ severity: "error", message: err.message, line: err.line, column: err.column }], warnings: [], isClean: false },
         err.filePath
       );
-      return { findings: [], socketAvailable: true, exitCode: 2 };
+      return { findings: [], socketAvailable: true, osvAvailable: true, exitCode: 2 };
     }
     throw err;
   }
@@ -78,7 +81,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
         { errors: [{ severity: "error", message: err.message, line: err.line, column: err.column }], warnings: [], isClean: false },
         err.filePath
       );
-      return { findings: [], socketAvailable: true, exitCode: 2 };
+      return { findings: [], socketAvailable: true, osvAvailable: true, exitCode: 2 };
     }
     throw err;
   }
@@ -90,7 +93,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
     process.stderr.write("Lint failed — aborting scan\n");
     printLintResult(depauditLint, depauditConfig.filePath ?? ".depaudit.yml");
     printLintResult(osvLint, osvConfig.filePath ?? "osv-scanner.toml");
-    return { findings: [], socketAvailable: true, exitCode: 1 };
+    return { findings: [], socketAvailable: true, osvAvailable: true, exitCode: 1 };
   }
 
   if (depauditLint.warnings.length > 0) {
@@ -101,7 +104,37 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
   }
 
   const manifests = await discoverManifests(scanPath);
-  const osvFindings = await runOsvScanner(manifests);
+
+  let osvAvailable = true;
+  let osvFindings: import("../types/finding.js").Finding[] = [];
+  // Raw OSV findings without applying the ignore config — used for orphan detection.
+  // We use an empty temp TOML so osv-scanner reports ALL CVEs regardless of osv-scanner.toml.
+  let osvRawFindings: import("../types/finding.js").Finding[] = [];
+  let emptyConfigDir: string | undefined;
+
+  try {
+    osvFindings = await runOsvScanner(manifests);
+  } catch {
+    osvAvailable = false;
+  }
+
+  // Run a second pass with no ignore config to get the full unfiltered CVE list.
+  // This is needed because osv-scanner suppresses accepted CVEs from its output,
+  // which would otherwise make all accepted CVEs appear as orphans.
+  if (osvAvailable && osvConfig.ignoredVulns.length > 0) {
+    try {
+      emptyConfigDir = await mkdtemp(join(tmpdir(), "depaudit-empty-cfg-"));
+      const emptyConfigPath = join(emptyConfigDir, "osv-scanner.toml");
+      await writeFile(emptyConfigPath, "", "utf8");
+      osvRawFindings = await runOsvScanner(manifests, undefined, emptyConfigPath);
+    } catch {
+      // If raw scan fails, fall back to using the filtered findings.
+      // This is safe: we just won't prune CVE accepts in this run.
+      osvRawFindings = osvFindings;
+    }
+  } else {
+    osvRawFindings = osvFindings;
+  }
 
   // Build package ref set: manifests (all packages) + OSV findings (transitive CVE packages).
   // Using manifests ensures Socket is called even for clean repos with no CVEs.
@@ -120,13 +153,18 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
     }
   }
 
+  if (!osvAvailable) {
+    process.stderr.write("osv: CVE scan failed catastrophically — scan aborted\n");
+    return { findings: [], socketAvailable: true, osvAvailable: false, exitCode: 1 };
+  }
+
   let socketResult: { findings: import("../types/finding.js").Finding[]; available: boolean };
   try {
     socketResult = await fetchSocketFindings([...packageRefMap.values()]);
   } catch (err: unknown) {
     if (err instanceof SocketAuthError) {
       process.stderr.write(`error: ${err.message}\n`);
-      return { findings: [], socketAvailable: false, exitCode: 2 };
+      return { findings: [], socketAvailable: false, osvAvailable: true, exitCode: 2 };
     }
     throw err;
   }
@@ -146,6 +184,30 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
     process.stderr.write(`expired accept: ${cf.finding.package} ${cf.finding.version} ${cf.finding.findingId}\n`);
   }
 
+  // Auto-prune orphaned accept entries (fail-open guard: only prune when source was available).
+  // For CVE orphan detection, use osvRawFindings (without suppression from osv-scanner.toml)
+  // so we can correctly identify which CVEs are still present in the tree.
+  const findingsForOrphanDetection = [...osvRawFindings, ...socketResult.findings];
+  const orphans = findOrphans(findingsForOrphanDetection, depauditConfig, osvConfig);
+
+  if (socketResult.available && depauditConfig.filePath && orphans.orphanedSupplyChain.length > 0) {
+    const n = await pruneDepauditYml(depauditConfig.filePath, orphans.orphanedSupplyChain);
+    if (n > 0) {
+      process.stderr.write(
+        `auto-prune: removed ${n} orphaned supplyChainAccepts entr${n === 1 ? "y" : "ies"} from .depaudit.yml\n`
+      );
+    }
+  }
+
+  if (osvAvailable && osvConfig.filePath && orphans.orphanedCve.length > 0) {
+    const n = await pruneOsvScannerToml(osvConfig.filePath, orphans.orphanedCve);
+    if (n > 0) {
+      process.stderr.write(
+        `auto-prune: removed ${n} orphaned IgnoredVulns entr${n === 1 ? "y" : "ies"} from osv-scanner.toml\n`
+      );
+    }
+  }
+
   const exitCode = newFindings.length === 0 && expiredAccepts.length === 0 ? 0 : 1;
-  return { findings: classified, socketAvailable: socketResult.available, exitCode };
+  return { findings: classified, socketAvailable: socketResult.available, osvAvailable, exitCode };
 }

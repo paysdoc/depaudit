@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "CVE-ORPHAN-0040"
+ignoreUntil = 2026-06-17
+reason = "Stale CVE accept that will be pruned on first run"

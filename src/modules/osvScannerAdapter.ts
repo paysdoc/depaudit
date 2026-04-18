@@ -85,15 +85,22 @@ interface OsvOutput {
 
 export async function runOsvScanner(
   manifests: Manifest[],
-  execFile: ExecFileFn = defaultExecFile
+  execFile: ExecFileFn = defaultExecFile,
+  overrideConfigFile?: string
 ): Promise<Finding[]> {
   if (manifests.length === 0) return [];
 
   const dirs = [...new Set(manifests.map((m) => dirname(m.path)))].sort();
 
+  const args = ["scan", "source", "--format=json"];
+  if (overrideConfigFile !== undefined) {
+    args.push("--config", overrideConfigFile);
+  }
+  args.push(...dirs);
+
   let stdout: string;
   try {
-    const result = await execFile("osv-scanner", ["scan", "source", "--format=json", ...dirs]);
+    const result = await execFile("osv-scanner", args);
     stdout = result.stdout;
   } catch (err: unknown) {
     const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
