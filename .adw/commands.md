@@ -34,8 +34,11 @@ bun add {library}
 ## Script Execution
 bun run {script}
 
+## Run E2E Tests
+bun run test:e2e
+
 ## Run Scenarios by Tag
-cucumber-js --tags "@{tag}"
+bun run test:e2e -- --tags "@{tag}"
 
 ## Run Regression Scenarios
-cucumber-js --tags "@regression"
+bun run test:e2e -- --tags "@regression"
