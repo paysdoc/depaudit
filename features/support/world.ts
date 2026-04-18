@@ -22,6 +22,18 @@ export class DepauditWorld extends World {
   fixturePath: string = PROJECT_ROOT;
   /** Files written during this scenario — cleaned up by After hooks in lint_steps.ts */
   writtenFiles: string[] = [];
+  /** Base URL of the mock Socket server for the current @adw-7 scenario */
+  socketMockUrl?: string;
+  /** Socket API token — string=set, undefined=explicitly unset from env */
+  socketToken?: string;
+  /** Per-request timeout override for Socket client (ms) — used to speed up BDD timeout scenarios */
+  socketRequestTimeoutMs?: number;
+  /** Mock server handle for teardown */
+  socketMock?: { stop: () => Promise<void>; hitCount: () => number };
+  /** Package name that the mock Socket server will flag (set by step definitions) */
+  socketAlertPackage?: string;
+  /** Package version that the mock Socket server will flag */
+  socketAlertVersion?: string;
 
   constructor(options: IWorldOptions) {
     super(options);

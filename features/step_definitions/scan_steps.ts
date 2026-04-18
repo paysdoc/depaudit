@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { Given, When, Then } from "@cucumber/cucumber";
 import assert from "node:assert/strict";
 import { DepauditWorld, PROJECT_ROOT, CLI_PATH } from "../support/world.js";
+import { startMockSocketServer } from "../support/mockSocketServer.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -93,12 +94,44 @@ Given<DepauditWorld>(
 
 // ─── When steps ────────────���─────────────────────────────────────────────────
 
-async function runDepaudit(world: DepauditWorld, args: string[]): Promise<void> {
+export async function runDepaudit(world: DepauditWorld, args: string[]): Promise<void> {
   let exitCode = 0;
   let stdout = "";
   let stderr = "";
+
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  // Forward Socket env vars when set by @adw-7 steps.
+  // socketToken semantics:
+  //   undefined  → don't touch SOCKET_API_TOKEN (pass-through from process.env)
+  //   ""         → explicitly delete SOCKET_API_TOKEN from env (test "no token" scenario)
+  //   "somevalue" → set SOCKET_API_TOKEN to that value
+  if (world.socketMockUrl !== undefined) env["SOCKET_API_BASE_URL"] = world.socketMockUrl;
+  if (world.socketToken === "") {
+    delete env["SOCKET_API_TOKEN"];
+  } else if (world.socketToken !== undefined) {
+    env["SOCKET_API_TOKEN"] = world.socketToken;
+  }
+  // if socketToken is undefined → leave SOCKET_API_TOKEN as-is from process.env
+  if (world.socketRequestTimeoutMs !== undefined) {
+    env["SOCKET_REQUEST_TIMEOUT_MS"] = String(world.socketRequestTimeoutMs);
+  }
+
+  // For scenarios that don't configure socket (e.g. regression tests), if no
+  // SOCKET_API_TOKEN is available in env, spin up a no-op mock so the CLI
+  // doesn't fail with SocketAuthError and break non-socket scenarios.
+  let fallbackMock: Awaited<ReturnType<typeof startMockSocketServer>> | undefined;
+  const needsFallback =
+    world.socketToken === undefined &&
+    world.socketMockUrl === undefined &&
+    !env["SOCKET_API_TOKEN"];
+  if (needsFallback) {
+    fallbackMock = await startMockSocketServer({ body: [] });
+    env["SOCKET_API_BASE_URL"] = fallbackMock.url;
+    env["SOCKET_API_TOKEN"] = "fallback-no-op-token";
+  }
+
   try {
-    const result = await execFileAsync("node", [CLI_PATH, ...args], { cwd: world.cwd });
+    const result = await execFileAsync("node", [CLI_PATH, ...args], { cwd: world.cwd, env });
     stdout = result.stdout;
     stderr = result.stderr;
     exitCode = 0;
@@ -107,6 +140,8 @@ async function runDepaudit(world: DepauditWorld, args: string[]): Promise<void> 
     exitCode = typeof e.code === "number" ? e.code : 1;
     stdout = e.stdout ?? "";
     stderr = e.stderr ?? "";
+  } finally {
+    if (fallbackMock) await fallbackMock.stop();
   }
   world.result = { exitCode, stdout, stderr };
 }
