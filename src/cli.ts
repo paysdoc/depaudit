@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
 import { runScanCommand } from "./commands/scanCommand.js";
+import { runLintCommand } from "./commands/lintCommand.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
@@ -11,6 +12,7 @@ Usage: depaudit <command> [options]
 
 Commands:
   scan [path]   Scan a Node repository for CVE findings (default path: cwd)
+  lint [path]   Lint osv-scanner.toml (default path: cwd)
 
 Options:
   -h, --help     Print this help message and exit
@@ -48,23 +50,31 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const [subcommand, scanPath, ...extra] = positionals;
-
-  if (subcommand !== "scan") {
-    process.stderr.write(subcommand ? `unknown command: ${subcommand}\n\n${USAGE}` : USAGE);
-    process.exit(2);
-  }
+  const [subcommand, cmdPath, ...extra] = positionals;
 
   if (extra.length > 0) {
     process.stderr.write(`error: unexpected arguments: ${extra.join(" ")}\n\n${USAGE}`);
     process.exit(2);
   }
 
-  try {
-    const code = await runScanCommand(scanPath ?? process.cwd());
-    process.exit(code);
-  } catch (err: unknown) {
-    process.stderr.write(`error: ${(err as Error).message}\n`);
+  if (subcommand === "scan") {
+    try {
+      const code = await runScanCommand(cmdPath ?? process.cwd());
+      process.exit(code);
+    } catch (err: unknown) {
+      process.stderr.write(`error: ${(err as Error).message}\n`);
+      process.exit(2);
+    }
+  } else if (subcommand === "lint") {
+    try {
+      const code = await runLintCommand(cmdPath ?? process.cwd());
+      process.exit(code);
+    } catch (err: unknown) {
+      process.stderr.write(`error: ${(err as Error).message}\n`);
+      process.exit(2);
+    }
+  } else {
+    process.stderr.write(subcommand ? `unknown command: ${subcommand}\n\n${USAGE}` : USAGE);
     process.exit(2);
   }
 }

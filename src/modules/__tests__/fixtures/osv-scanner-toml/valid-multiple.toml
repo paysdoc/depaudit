@@ -1,0 +1,9 @@
+[[IgnoredVulns]]
+id = "CVE-2021-23337"
+ignoreUntil = {{IGNORE_UNTIL_30D}}
+reason = "upstream fix pending in 4.17.21"
+
+[[IgnoredVulns]]
+id = "GHSA-vh95-rmgr-6w4m"
+ignoreUntil = {{IGNORE_UNTIL_60D}}
+reason = "prototype pollution low risk in our usage context"

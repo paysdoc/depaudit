@@ -16,6 +16,8 @@ export class DepauditWorld extends World {
   cwd: string = PROJECT_ROOT;
   /** Absolute path of the fixture currently under test */
   fixturePath: string = PROJECT_ROOT;
+  /** Files written during this scenario — cleaned up by After hooks in lint_steps.ts */
+  writtenFiles: string[] = [];
 
   constructor(options: IWorldOptions) {
     super(options);
