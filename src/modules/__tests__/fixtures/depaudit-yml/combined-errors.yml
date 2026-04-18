@@ -1,0 +1,16 @@
+version: 1
+policy:
+  severityThreshold: bogus
+  ecosystems: auto
+  maxAcceptDays: 90
+  maxCommonAndFineDays: 365
+commonAndFine:
+  - package: lodash
+    alertType: protestware
+    expires: "{{EXPIRES_PAST_1D}}"
+supplyChainAccepts:
+  - package: lodash
+    version: "4.17.20"
+    findingId: GHSA-test-1234
+    expires: "{{EXPIRES_30D}}"
+    reason: "too short"

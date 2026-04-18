@@ -1,0 +1,13 @@
+version: 1
+policy:
+  severityThreshold: medium
+  ecosystems: auto
+  maxAcceptDays: 90
+  maxCommonAndFineDays: 365
+commonAndFine: []
+supplyChainAccepts:
+  - package: lodash
+    version: "4.17.20"
+    findingId: GHSA-test-1234
+    expires: "{{EXPIRES_120D}}"
+    reason: "upstream fix pending in next major release cycle"
