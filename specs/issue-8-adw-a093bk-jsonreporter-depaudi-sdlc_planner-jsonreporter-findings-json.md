@@ -9,7 +9,7 @@ issueJson: `{"number":8,"title":"JsonReporter → .depaudit/findings.json","body
 
 Introduces a new deep module, `JsonReporter`, which materialises the output of `classifyFindings` as a canonical JSON document at `.depaudit/findings.json` on every `depaudit scan` run. The file is the contract surface for the (future) `/depaudit-triage` Claude Code skill: it must be deterministic, schema-stable, self-describing enough that the skill can walk findings one at a time and reason about which classification each finding fell into, and rich enough to explain *why* a finding was or wasn't gated (severity, source, source-availability, acceptance metadata, upgrade suggestion where available).
 
-The schema carries every classification category the `FindingMatcher` emits (`new` / `accepted` / `whitelisted` / `expired-accept`) plus the originating source (`osv` / `socket`), the manifest path that contributed the finding, and a top-level `sourceAvailability` object keyed by source (`{ osv: "available" | "unavailable", socket: "available" | "unavailable" }`) so the triage skill can distinguish "no supply-chain findings" from "supply-chain results are missing this run because Socket was unreachable." An optional per-finding `upgradeSuggestion` field is included in the schema from day one (populated as `null` in this slice — the resolver lives in a later slice, but the shape must not churn).
+The schema carries every classification category the `FindingMatcher` emits (`new` / `accepted` / `whitelisted` / `expired-accept`) plus the originating source (`osv` / `socket`), the manifest path that contributed the finding, and a top-level `sourceAvailability` object keyed by source (`{ osv: "available" | "unavailable", socket: "available" | "unavailable" }`) so the triage skill can distinguish "no supply-chain findings" from "supply-chain results are missing this run because Socket was unreachable." An optional per-finding `upgrade` sub-object (`{ suggestedVersion: string }`) is included only where applicable — populated from OSV-Scanner's fix metadata when a resolving upgrade is known, and **omitted entirely** for Socket findings and for OSV findings with no upstream fix. Per-finding `classification` values are written with the exact hyphenated strings the `FindingMatcher` emits (no translation layer). A top-level `classifications` array also lists every valid classification value so downstream consumers can validate without hard-coding the enum.
 
 `JsonReporter` is wired into `ScanCommand` as the penultimate step (after `classifyFindings`, before the stdout print and the exit-code return). `ScanCommand` itself is extended to own the filesystem I/O: it ensures `<scanPath>/.depaudit/` exists, writes `findings.json` to it, then — separately — consults `.gitignore` in the same `scanPath` and emits a one-line **stdout** warning if `.depaudit/findings.json` is not covered by an ignore rule. The warning is informational; it never flips the exit code, never modifies `.gitignore` (that's `DepauditSetupCommand`'s job per the issue body), and never appears when the path is already ignored. Lint-failure and config-parse early-exits write an *empty-but-valid* findings file so downstream triage tooling can always rely on the path existing.
 
@@ -47,19 +47,19 @@ Specifically:
 
 - **New `src/modules/jsonReporter.ts`** — exports `renderFindingsJson(result)` (pure, deterministic) and `writeFindingsFile(scanPath, result)` (filesystem I/O). The pure function produces the JSON *string*; the writer ensures `<scanPath>/.depaudit/` exists and writes `<scanPath>/.depaudit/findings.json`. The separation lets snapshot tests assert on the string without mocking the filesystem and lets integration tests assert on the file on disk without re-rendering.
 
-- **Schema (`FindingsJsonV1`)** — top-level object with an explicit `schemaVersion: 1`, a `generatedAt` ISO-8601 UTC timestamp (injected, so snapshot tests can pass a frozen date), a `sourceAvailability: { osv: "available" | "unavailable", socket: "available" | "unavailable" }` map, a `counts` summary keyed by category (`new`, `accepted`, `whitelisted`, `expiredAccept`), and a `findings: FindingRecord[]` array. Each `FindingRecord` carries `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `summary` (the Finding's description; may be null), `classification` (one of the four `FindingCategory` values re-expressed in camelCase: `new`/`accepted`/`whitelisted`/`expiredAccept`), `source` (`"osv"` or `"socket"`), and `upgradeSuggestion: null` (reserved for the later slice; shipped as `null` today so the schema doesn't churn when the resolver lands). Keys are written in insertion order — insertion order is controlled by the reporter and is the contract surface.
+- **Schema (`FindingsJsonV1`)** — top-level object with an explicit `schemaVersion: 1` <!-- ADW-WARNING: scenarios (features/scan_json_reporter.feature:24) assert on a top-level field named "version", not "schemaVersion". Issue body does not name the field; resolve this during implementation — either rename the reporter field to `version` to satisfy the scenario, or update the step to read `schemaVersion`. -->, a `generatedAt` ISO-8601 UTC timestamp (injected, so snapshot tests can pass a frozen date) <!-- ADW-WARNING: scenarios (features/scan_json_reporter.feature:187) assert on a top-level field named "scannedAt", not "generatedAt". Issue body does not name the field; resolve during implementation — either rename the reporter field to `scannedAt` to satisfy the scenario, or update the step to read `generatedAt`. -->, a `sourceAvailability: { osv: "available" | "unavailable", socket: "available" | "unavailable" }` map, a `counts` summary keyed by category (`new`, `accepted`, `whitelisted`, `"expired-accept"`), a `classifications: ["new", "accepted", "whitelisted", "expired-accept"]` array (so clean-scan output still documents the valid classification enum — drives `scan_json_reporter.feature` scenario "Schema documents the 'expired-accept' classification as a valid category"), and a `findings: FindingRecord[]` array. Each `FindingRecord` carries `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `summary` (the Finding's description; may be null), `classification` (one of the four `FindingCategory` values passed through verbatim: `new`/`accepted`/`whitelisted`/`expired-accept`), `source` (`"osv"` or `"socket"`), and — **only where applicable** — an `upgrade: { suggestedVersion: string }` sub-object (populated from OSV fix metadata; key omitted entirely when no upgrade is known or for Socket findings). Keys are written in insertion order — insertion order is controlled by the reporter and is the contract surface.
 
 - **Deterministic output.** (a) Top-level key order fixed. (b) `findings` array sorted stably by a tuple of `(classification, ecosystem, package, version, findingId, manifestPath)` — same compound ordering as the existing `stdoutReporter` would produce if it sorted (it doesn't, but the triage skill needs predictable ordering so successive scans on an unchanged tree produce a byte-identical file, making git diffs trivially reviewable *on the rare occasions a user chooses to commit the file* or inspects a CI artifact). (c) `JSON.stringify(..., null, 2)` for human-readability.
 
-- **Category re-encoding.** `FindingCategory` is `"new" | "accepted" | "whitelisted" | "expired-accept"` (`src/types/depauditConfig.ts:38`). In the JSON output, `expired-accept` becomes `expiredAccept` so the schema is pure camelCase and JSON-consumer-ergonomic (the hyphen variant is preserved in the internal TypeScript domain but does not leak into the external contract). The mapping is a one-line helper in `jsonReporter.ts`; no types change.
+- **Category pass-through.** `FindingCategory` is `"new" | "accepted" | "whitelisted" | "expired-accept"` (`src/types/depauditConfig.ts:38`) and is written to the JSON output verbatim — the hyphenated `expired-accept` is the external contract, matching the issue body. No translation layer; no mapping helper.
 
-- **`counts` summary.** Four integer fields (`new`, `accepted`, `whitelisted`, `expiredAccept`) for O(1) access by the triage skill. Computed in the reporter from the findings array, not threaded through from `classifyFindings` — keeps the reporter self-contained.
+- **`counts` summary.** Four integer fields (`new`, `accepted`, `whitelisted`, `"expired-accept"`) for O(1) access by the triage skill. Computed in the reporter from the findings array, not threaded through from `classifyFindings` — keeps the reporter self-contained. Keys mirror the `classification` enum verbatim so callers can look up via `counts[finding.classification]`.
 
 - **`sourceAvailability`.** Derived from the `ScanResult.socketAvailable` boolean and a new implicit OSV availability field. Today OSV-Scanner either succeeds or aborts the whole run (`osvScannerAdapter.ts`'s error re-throw arm at `:53-57` of its test file), so `osv` is always `"available"` in any JSON file we write — but including the key in the schema from day one means the field is in place for the future possibility of fail-open-on-OSV-error (out of scope here, but aligned with the PRD's general "don't ship a breaking schema change later" principle). The early-exit paths (lint failure, config parse error) also emit `{ osv: "available", socket: "available" }` because those paths exit before either source is consulted — "no information recorded" is conceptually closer to "available but no findings" than to "unavailable." This is called out in the schema doc comment so the skill author knows to read the `exitCode` alongside the `sourceAvailability`.
 
 - **Wire into `ScanCommand`.** Call `writeFindingsFile` at three points:
   1. **Success path.** After `classifyFindings(...)` returns, before the stdout print. This is the main case.
-  2. **Lint failure.** Before the early-exit at `scanCommand.ts:93` — write an empty-findings file (`findings: []`, `counts: { new: 0, accepted: 0, whitelisted: 0, expiredAccept: 0 }`, `sourceAvailability: { osv: "available", socket: "available" }`). The triage skill reading this will see an empty findings set and an `exitCode: 1`-aligned state.
+  2. **Lint failure.** Before the early-exit at `scanCommand.ts:93` — write an empty-findings file (`findings: []`, `counts: { new: 0, accepted: 0, whitelisted: 0, "expired-accept": 0 }`, `sourceAvailability: { osv: "available", socket: "available" }`). The triage skill reading this will see an empty findings set and an `exitCode: 1`-aligned state.
   3. **Config parse error.** Before both early-exits at `scanCommand.ts:67` and `scanCommand.ts:81` — same empty-findings file as the lint-failure path.
   - Rationale: downstream tools should be able to count on the file existing whenever `depaudit scan` has been invoked at all. "File missing" should mean "scan never ran," not "scan ran but hit an error."
   - Socket auth-error early-exit (`scanCommand.ts:127-131`) also writes the empty file, with `sourceAvailability.socket = "unavailable"` to reflect that Socket specifically could not be consulted.
@@ -68,12 +68,12 @@ Specifically:
 
 - **New `src/modules/jsonReporter.ts` exports:**
   - `interface FindingsJsonV1` — full schema type.
-  - `interface FindingRecord` — per-finding sub-type.
+  - `interface FindingRecord` — per-finding sub-type (with `upgrade?: { suggestedVersion: string }` optional).
   - `function renderFindingsJson(input: RenderInput): string` — the pure renderer.
   - `function writeFindingsFile(scanPath: string, input: RenderInput): Promise<void>` — the writer; ensures directory exists via `mkdir(..., { recursive: true })`.
   - `function checkGitignore(scanPath: string): Promise<{ ignored: boolean; reason: "missing" | "not-matched" | "ok" }>` — the detector; non-throwing.
   - `function printGitignoreWarning(check, stream?)` — the stdout emitter; called by `ScanCommand` when `ignored === false`.
-  - `type RenderInput = { findings: ClassifiedFinding[]; socketAvailable: boolean; osvAvailable?: boolean; generatedAt: Date }` — explicit inputs; `generatedAt` is injected so tests can freeze time.
+  - `type RenderInput = { findings: ClassifiedFinding[]; socketAvailable: boolean; osvAvailable?: boolean; generatedAt: Date }` — explicit inputs; `generatedAt` is injected so tests can freeze time. Each `ClassifiedFinding`'s OSV fix metadata (if any) is read to populate the optional `upgrade.suggestedVersion`.
 
 - **`ScanCommand` changes:**
   - Add a single pre-return block that (a) calls `writeFindingsFile(scanPath, { findings, socketAvailable, osvAvailable: true, generatedAt: new Date() })`, (b) calls `checkGitignore(scanPath)`, (c) calls `printGitignoreWarning` if needed.
@@ -82,13 +82,14 @@ Specifically:
 
 - **Snapshot tests** (new file `src/modules/__tests__/jsonReporter.test.ts`):
   - "empty result" — no findings, both sources available → canonical empty-findings snapshot.
-  - "mixed classifications" — four findings, one per category (`new`, `accepted`, `whitelisted`, `expiredAccept`), a mix of `osv` and `socket` sources, across two ecosystems (`npm`, `pip`), two manifests → canonical mixed snapshot. This is the primary schema-contract assertion.
+  - "mixed classifications" — four findings, one per category (`new`, `accepted`, `whitelisted`, `expired-accept`), a mix of `osv` and `socket` sources, across two ecosystems (`npm`, `pip`), two manifests → canonical mixed snapshot. This is the primary schema-contract assertion.
   - "socket unavailable" — single OSV finding plus `socketAvailable: false` → snapshot shows `sourceAvailability.socket === "unavailable"` and counts match.
   - "deterministic ordering" — three findings presented in shuffled input order → output JSON byte-identical across two runs (asserts stable sort).
-  - "category mapping" — a finding with internal `FindingCategory: "expired-accept"` → JSON `classification: "expiredAccept"` (regression guard for the hyphen→camelCase translation).
+  - "category pass-through" — a finding with internal `FindingCategory: "expired-accept"` → JSON `classification: "expired-accept"` (regression guard that the hyphenated form is preserved end-to-end, not translated).
   - "summary field optional" — a finding whose `summary` is `undefined` in the domain → JSON field rendered as `null` (explicit null, not absent key, so the schema's field set is stable).
-  - "upgradeSuggestion placeholder" — every finding carries `upgradeSuggestion: null` until the resolver slice lands → regression guard for the reserved field.
-  - "counts sanity" — 3 new, 2 accepted, 1 whitelisted, 1 expired-accept → `counts === { new: 3, accepted: 2, whitelisted: 1, expiredAccept: 1 }`.
+  - "upgrade field present only when applicable" — (a) OSV finding whose fix metadata names a resolving version → record contains `upgrade.suggestedVersion` equal to that version; (b) OSV finding with no upstream fix → record has no `upgrade` key at all (`"upgrade" in record === false`); (c) every Socket finding → no `upgrade` key.
+  - "counts sanity" — 3 new, 2 accepted, 1 whitelisted, 1 expired-accept → `counts === { new: 3, accepted: 2, whitelisted: 1, "expired-accept": 1 }`.
+  - "classifications enum is always emitted" — top-level `classifications` array equals `["new", "accepted", "whitelisted", "expired-accept"]` in insertion order (drives the `scan_json_reporter.feature` "Schema documents the 'expired-accept' classification as a valid category" scenario even on clean scans).
   - "generatedAt is a valid ISO-8601 UTC string" — given a fixed `Date` input, the rendered field is the input's `.toISOString()`.
 
 - **Writer tests** (same test file, using `tmpdir()` via `node:os.tmpdir()` + a unique per-test subdir, cleaned up in a `beforeEach/afterEach`):
@@ -103,17 +104,25 @@ Specifically:
   - "`.gitignore` contains `.depaudit/findings.json` explicitly → `ignored: true, reason: 'ok'`".
   - "`.gitignore` contains `**/*.json` broad pattern that matches → `ignored: true, reason: 'ok'`".
 
-- **BDD coverage** (new `features/scan_findings_json.feature`, tagged `@adw-8`). Scenarios directly derived from the issue's acceptance criteria:
-  1. `.depaudit/findings.json` is written on a clean scan.
-  2. `.depaudit/findings.json` is written on a vulnerable scan and its content is valid JSON with `counts.new > 0`.
-  3. `.depaudit/findings.json` is written when `lint` fails (early-exit path) with `findings: []`.
-  4. `.depaudit/findings.json` carries `sourceAvailability.socket === "unavailable"` when the Socket mock is a 5xx and the scan fails open (reuses the mock server infrastructure from `@adw-7`).
-  5. Classification `expiredAccept` appears in the JSON when an OSV `IgnoredVulns` entry is expired (mirrors the existing `@adw-4` expired-accept scenario's setup).
-  6. `depaudit scan` warns to stdout when `.depaudit/findings.json` is not gitignored.
-  7. `depaudit scan` does **not** warn when `.gitignore` contains `.depaudit/`.
-  8. `depaudit scan` does **not** modify `.gitignore` under any of the above conditions (assertion on file mtime or byte equality before/after).
+- **BDD coverage** in `features/scan_json_reporter.feature` (tagged `@adw-8`). The authored feature covers 15 scenarios (11 `@regression`, 4 slice-only) mapped directly to the issue's acceptance criteria:
+  1. Clean repo still writes `.depaudit/findings.json` with `findings: []` and top-level `version === 1`. <!-- ADW-WARNING: scenario asserts top-level "version"; plan schema names this "schemaVersion". Reconcile during implementation. -->
+  2. Known-CVE OSV finding → `classification: "new"`, `source: "osv"`, non-empty `package`/`version`/`findingId`/`severity`/`ecosystem`/`manifestPath`.
+  3. OSV finding with a valid `[[IgnoredVulns]]` entry → `classification: "accepted"`, `source: "osv"`.
+  4. Socket alert with a matching whitelist entry → `classification: "whitelisted"`, `source: "socket"`, `findingId: "install-scripts"`.
+  5. Schema documents the four classification values (drives the top-level `classifications` array described above).
+  6. Both sources available → `sourceAvailability.osv === "available"` and `sourceAvailability.socket === "available"`.
+  7. Socket timeout with OSV CVEs present → `sourceAvailability.socket === "unavailable"`, `sourceAvailability.osv === "available"`, findings still carry OSV entries.
+  8. Socket 5xx on clean repo → `sourceAvailability.socket === "unavailable"`, `findings: []`.
+  9. Polyglot scan → each finding carries its originating `ecosystem` and `manifestPath` (npm/`package.json` + pip/`requirements.txt`).
+  10. OSV finding with an available upstream fix → record carries `upgrade.suggestedVersion` equal to the fix version.
+  11. OSV finding with no upstream fix → record has **no** `upgrade` key (not `null`).
+  12. Repo without a `.gitignore` rule for `.depaudit/` → stdout mentions "findings.json" and "gitignore"; file still written.
+  13. Repo whose `.gitignore` excludes `.depaudit/` → stdout does NOT mention "gitignore".
+  14. Repo with no `.gitignore` at all → stdout mentions "findings.json" and "gitignore"; file still written.
+  15. Re-running scan on a repo with a stale `.depaudit/findings.json` → file is overwritten atomically; stale entries gone.
+  16. Top-level `scannedAt` is a valid ISO-8601 timestamp. <!-- ADW-WARNING: scenario asserts top-level "scannedAt"; plan schema names this "generatedAt". Reconcile during implementation. -->
 
-- **Step definitions** in a new `features/step_definitions/scan_findings_json_steps.ts`. Uses the same `DepauditWorld` instance + process-env + `execFile` machinery as the other step files. New fixture repos under `fixtures/findings-json-*`.
+- **Step definitions** in a new `features/step_definitions/scan_json_reporter_steps.ts`. Uses the same `DepauditWorld` instance + process-env + `execFile` machinery as the other step files. Fixture repos under `fixtures/json-*` (names per the feature file: `json-clean-npm`, `json-new-osv`, `json-accepted-osv`, `json-whitelisted-socket`, `json-schema-categories`, `json-sources-happy`, `json-socket-timeout`, `json-socket-5xx`, `json-polyglot`, `json-upgrade-available`, `json-upgrade-unavailable`, `json-not-gitignored`, `json-gitignored-dir`, `json-no-gitignore`, `json-rerun`, `json-scanned-at`).
 
 - **UBIQUITOUS_LANGUAGE update.** Add a row to the Modules table: **`JsonReporter`** — "Deep module that renders the scan's classified Findings as `.depaudit/findings.json`, the snapshot consumed by `/depaudit-triage`." No schema changes elsewhere.
 
@@ -143,7 +152,7 @@ Use these files to implement the feature:
 - `src/modules/stdoutReporter.ts` — Sibling. No change; its output is unchanged; the JSON file is an additional, parallel output not a replacement.
 - `src/modules/lintReporter.ts` — Sibling; same pattern of "small module, one function, one side effect." Used as a shape reference for `jsonReporter.ts`.
 - `src/modules/findingMatcher.ts` — Produces the `ClassifiedFinding[]` this slice serializes. No change; the reporter is downstream-only.
-- `features/step_definitions/scan_steps.ts` & `scan_accepts_steps.ts` — Reference patterns for fixture-loading and run-assertion steps. New `scan_findings_json_steps.ts` mirrors their style.
+- `features/step_definitions/scan_steps.ts` & `scan_accepts_steps.ts` — Reference patterns for fixture-loading and run-assertion steps. New `scan_json_reporter_steps.ts` mirrors their style.
 - `features/scan_socket_supply_chain.feature` & `features/step_definitions/scan_socket_supply_chain_steps.ts` — Source of the mock-Socket-server infrastructure reused by `@adw-8` scenario 4.
 - `features/support/world.ts` — Already carries `fixturePath`, `socketMockUrl`, `result`, `writtenFiles`. No new field needed; fixture-specific state is local to the new step file.
 - `features/support/mockSocketServer.ts` — Reused as-is.
@@ -162,20 +171,17 @@ Use these files to implement the feature:
 
 - `src/modules/__tests__/fixtures/jsonReporter/socket-unavailable.json` — the materialised expected file for the fail-open snapshot.
 
-- `features/scan_findings_json.feature` — new `@adw-8` BDD feature file covering all 8 scenarios listed in the Solution Statement. Scenarios reuse existing fixture repos where possible (`fixtures/clean-npm`, `fixtures/vulnerable-npm`, `fixtures/socket-5xx-clean`) and add new ones for the gitignore-present/absent cases.
+- `features/scan_json_reporter.feature` — the `@adw-8` BDD feature file (already authored). Covers the 16 scenarios listed in the Solution Statement. Existing fixture repos are reused where possible; new `fixtures/json-*` repos are added for the JSON-specific cases.
 
-- `features/step_definitions/scan_findings_json_steps.ts` — step definitions for the new feature file. Reads `.depaudit/findings.json` from the fixture path after the scan, parses it, asserts on the top-level keys, `counts`, `sourceAvailability`, and representative `findings[].classification` values. Uses `node:fs/promises` + `JSON.parse` — no dependency on `jsonReporter.ts`'s types (BDD is a black-box test of the on-disk contract).
+- `features/step_definitions/scan_json_reporter_steps.ts` — step definitions for the feature file. Reads `.depaudit/findings.json` from the fixture path after the scan, parses it, asserts on the top-level keys, `sourceAvailability`, and representative `findings[].classification` / `source` / `upgrade` values. Uses `node:fs/promises` + `JSON.parse` — no dependency on `jsonReporter.ts`'s types (BDD is a black-box test of the on-disk contract).
 
-- `fixtures/findings-json-clean-no-gitignore/` — npm fixture with no `.gitignore`; drives scenario 6 (stdout warning).
-- `fixtures/findings-json-clean-with-gitignore/` — npm fixture whose `.gitignore` contains `.depaudit/`; drives scenario 7 (no warning).
-- `fixtures/findings-json-clean-with-explicit-gitignore/` — npm fixture whose `.gitignore` contains the exact `.depaudit/findings.json` path; drives the same-no-warning assertion for the explicit-path case.
-- `fixtures/findings-json-lint-fail/` — npm fixture with a malformed `osv-scanner.toml` so the lint step fails; drives scenario 3 (empty file still written).
+- Fixture repos under `fixtures/json-*` — one per feature-file scenario: `json-clean-npm`, `json-new-osv`, `json-accepted-osv`, `json-whitelisted-socket`, `json-schema-categories`, `json-sources-happy`, `json-socket-timeout`, `json-socket-5xx`, `json-polyglot`, `json-upgrade-available`, `json-upgrade-unavailable`, `json-not-gitignored`, `json-gitignored-dir`, `json-no-gitignore`, `json-rerun`, `json-scanned-at`. Each is minimal — a `package.json` (+ lockfile / `requirements.txt` where the ecosystem demands it) plus the `.depaudit.yml` / `osv-scanner.toml` / `.gitignore` combination the scenario requires.
 
 ## Implementation Plan
 
 ### Phase 1: Foundation — types and pure renderer
 
-Ship `renderFindingsJson` as a pure function keyed off a minimal `RenderInput` shape, with an explicit `generatedAt: Date`, so the function is trivially testable without touching the filesystem. Commit a snapshot of the empty-result case and the mixed-classifications case to establish the schema contract in source control before any `ScanCommand` wiring. This phase includes the `FindingCategory` → `"expiredAccept"` hyphen-to-camelCase translation and the deterministic `findings[]` sort.
+Ship `renderFindingsJson` as a pure function keyed off a minimal `RenderInput` shape, with an explicit `generatedAt: Date`, so the function is trivially testable without touching the filesystem. Commit a snapshot of the empty-result case and the mixed-classifications case to establish the schema contract in source control before any `ScanCommand` wiring. This phase passes `FindingCategory` through verbatim (hyphenated `expired-accept` preserved in the JSON output), derives the optional `upgrade` sub-object from OSV fix metadata (omitted when absent), and establishes the deterministic `findings[]` sort.
 
 ### Phase 2: Core Implementation — filesystem writer and gitignore detector
 
@@ -197,23 +203,24 @@ Execute every step in order, top to bottom.
 
 ### 2. Create `src/modules/jsonReporter.ts` — types
 
-- Add the `FindingsJsonV1`, `FindingRecord`, `SourceAvailability`, `FindingCategoryJson` (the camelCase variant), `SourceAvailabilityLabel` (`"available" | "unavailable"`), and `RenderInput` TypeScript interfaces. Keep them unexported-by-default except `FindingsJsonV1` and `FindingRecord` and `RenderInput`; everything else is a local type.
-- Document the schema with a JSDoc block on `FindingsJsonV1` that names this as `.depaudit/findings.json`, names the consumer (`/depaudit-triage`), and flags `upgradeSuggestion` as reserved-for-future-resolver. Keep the JSDoc under 12 lines.
-- No dependency on `node:fs` at this point — this file imports only `node:path` (for later) and the `ClassifiedFinding` / `Finding` types.
+- Add the `FindingsJsonV1`, `FindingRecord`, `SourceAvailability`, `SourceAvailabilityLabel` (`"available" | "unavailable"`), `UpgradeSuggestion` (`{ suggestedVersion: string }`), and `RenderInput` TypeScript interfaces. Keep them unexported-by-default except `FindingsJsonV1`, `FindingRecord`, `RenderInput`, and `UpgradeSuggestion`; everything else is a local type. No `FindingCategoryJson` / no camelCase variant — the JSON output reuses `FindingCategory` verbatim.
+- Document the schema with a JSDoc block on `FindingsJsonV1` that names this as `.depaudit/findings.json`, names the consumer (`/depaudit-triage`), flags `upgrade` as optional (present only when a resolving upstream fix is known — absent for Socket findings and for OSV findings with no fix), and notes that `classification` uses the same hyphenated strings as `FindingCategory`. Keep the JSDoc under 15 lines.
+- No dependency on `node:fs` at this point — this file imports only `node:path` (for later) and the `ClassifiedFinding` / `Finding` / `FindingCategory` types.
 
 ### 3. Add the pure `renderFindingsJson` function
 
 - Signature: `export function renderFindingsJson(input: RenderInput): string`.
-- Build the top-level object with keys in this explicit order: `schemaVersion`, `generatedAt`, `sourceAvailability`, `counts`, `findings`.
+- Build the top-level object with keys in this explicit order: `schemaVersion`, `generatedAt`, `sourceAvailability`, `classifications`, `counts`, `findings`. <!-- ADW-WARNING: scenario file asserts top-level "version" and "scannedAt" rather than "schemaVersion" and "generatedAt". Decide during implementation: either rename these two keys here to match the scenarios, or update the scenario step definitions to read the names used here. Do not silently diverge. -->
 - `schemaVersion`: literal `1`.
 - `generatedAt`: `input.generatedAt.toISOString()`.
 - `sourceAvailability`: `{ osv: input.osvAvailable !== false ? "available" : "unavailable", socket: input.socketAvailable ? "available" : "unavailable" }`. `osvAvailable` defaults to `true` because today OSV fail-open is not implemented; the default preserves future flexibility without breaking callers.
-- `counts`: iterate `input.findings` once, tally by `finding.category` (remembering the `"expired-accept"` → `"expiredAccept"` rename), emit `{ new, accepted, whitelisted, expiredAccept }` with zero-filled defaults.
+- `classifications`: literal `["new", "accepted", "whitelisted", "expired-accept"]` — always the same four values in the same order; drives the "Schema documents the 'expired-accept' classification as a valid category" scenario.
+- `counts`: iterate `input.findings` once, tally by `finding.category` (no rename — hyphenated form flows through), emit `{ new, accepted, whitelisted, "expired-accept" }` with zero-filled defaults. Keys mirror the classification enum so callers can look up via `counts[finding.classification]`.
 - `findings`: map each `ClassifiedFinding` to a `FindingRecord`:
   - `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `source`: copied verbatim.
   - `summary`: `cf.finding.summary ?? null` — explicit `null` to keep the field always present.
-  - `classification`: translate `"expired-accept"` → `"expiredAccept"`, others pass through.
-  - `upgradeSuggestion`: literal `null`.
+  - `classification`: `cf.category` passed through verbatim (includes hyphenated `"expired-accept"`).
+  - `upgrade` (optional): for OSV findings, read the fix metadata from `cf.finding` — if a resolving version is known, emit `{ suggestedVersion: <version> }`; otherwise **omit the key entirely**. For Socket findings, always omit (no upgrade concept). Use conditional spread (`...(upgrade ? { upgrade } : {})`) so the key is never set to `null` or `undefined`.
 - Sort `findings` in place by the compound tuple `[classification, ecosystem, package, version, findingId, manifestPath]`, ascending lexicographic on each component.
 - Return `JSON.stringify(obj, null, 2) + "\n"` — trailing newline keeps diff tools happy and matches POSIX text-file convention.
 
@@ -223,12 +230,16 @@ Execute every step in order, top to bottom.
 - Inline helpers: `makeOsvFinding(overrides)` and `makeSocketFinding(overrides)` mirror the style in `findingMatcher.test.ts` so tests read the same way.
 - A fixed `FROZEN_DATE = new Date("2026-04-18T12:00:00.000Z")` passed to every test.
 - Test "empty result returns canonical empty-findings JSON": zero findings, both sources available → `toMatchInlineSnapshot` with the exact expected string.
-- Test "mixed classifications render all four categories": four findings — `new` + `accepted` + `whitelisted` + `expiredAccept` — across two sources and two ecosystems. Use `toMatchFileSnapshot("fixtures/jsonReporter/mixed-classifications.json")`.
+- Test "mixed classifications render all four categories": four findings — `new` + `accepted` + `whitelisted` + `expired-accept` — across two sources and two ecosystems. Use `toMatchFileSnapshot("fixtures/jsonReporter/mixed-classifications.json")`.
 - Test "socket unavailable maps to sourceAvailability.socket": one OSV finding + `socketAvailable: false` → `toMatchFileSnapshot("fixtures/jsonReporter/socket-unavailable.json")`.
-- Test "category hyphen→camelCase translation": single finding with `category: "expired-accept"` → parse the output and assert `.findings[0].classification === "expiredAccept"`.
+- Test "classification hyphen is preserved": single finding with `category: "expired-accept"` → parse the output and assert `.findings[0].classification === "expired-accept"`.
+- Test "classifications enum is always emitted": parsed `.classifications` deep-equals `["new", "accepted", "whitelisted", "expired-accept"]` regardless of findings content.
 - Test "summary optional becomes null": finding with `summary: undefined` → parsed `.findings[0].summary === null`.
-- Test "upgradeSuggestion is always null placeholder": parsed `.findings[0].upgradeSuggestion === null` for every finding.
-- Test "counts match finding categories": 3 new + 2 accepted + 1 whitelisted + 1 expired-accept → `counts === { new: 3, accepted: 2, whitelisted: 1, expiredAccept: 1 }`.
+- Test "upgrade field is present only when fix exists":
+  - OSV finding with fix metadata → parsed `.findings[0].upgrade.suggestedVersion` equals the fix version.
+  - OSV finding with no fix metadata → `"upgrade" in parsed.findings[0] === false`.
+  - Socket finding → `"upgrade" in parsed.findings[0] === false`.
+- Test "counts match finding categories": 3 new + 2 accepted + 1 whitelisted + 1 expired-accept → `counts === { new: 3, accepted: 2, whitelisted: 1, "expired-accept": 1 }`.
 - Test "generatedAt is the input Date's ISO string": assert `parsed.generatedAt === FROZEN_DATE.toISOString()`.
 - Test "findings array is stably sorted": pass findings in shuffled order → assert the serialized output is byte-identical to a second call with a different shuffled input.
 - Test "schemaVersion is 1": trivial regression guard.
@@ -309,44 +320,72 @@ Execute every step in order, top to bottom.
 
 - Add `src/commands/__tests__/scanCommand.test.ts` if the project convention permits (check whether `commands/__tests__/` exists — if not, skip this step and rely on BDD coverage). Looking at the repo, `commands/` currently has no `__tests__` subfolder; skip the unit test and cover via BDD in step 13 to stay consistent with existing patterns.
 
-### 13. Author the `@adw-8` BDD feature file
+### 13. Confirm the `@adw-8` BDD feature file is in place
 
-- Create `features/scan_findings_json.feature`. Tag the feature `@adw-8`. Mirror the style of `features/scan_socket_supply_chain.feature`.
-- Scenarios (numbered as in the Solution Statement):
-  1. `@adw-8 @regression` — "Clean scan writes .depaudit/findings.json with counts.new === 0" using `fixtures/clean-npm`.
-  2. `@adw-8 @regression` — "Scan with a known CVE writes .depaudit/findings.json with at least one finding" using `fixtures/vulnerable-npm`.
-  3. `@adw-8 @regression` — "Scan aborted by lint failure still writes an empty .depaudit/findings.json" using a new `fixtures/findings-json-lint-fail` (vulnerable-npm clone whose `osv-scanner.toml` has an expired `ignoreUntil`).
-  4. `@adw-8 @regression` — "Socket fail-open is recorded as sourceAvailability.socket === 'unavailable'" reusing `fixtures/socket-5xx-clean` + its mock server.
-  5. `@adw-8 @regression` — "Expired OSV accept appears in findings with classification 'expiredAccept'" using a vulnerable fixture whose `osv-scanner.toml` has an expired `[[IgnoredVulns]]`.
-  6. `@adw-8 @regression` — "Clean scan with no .gitignore writes the file and warns on stdout" using `fixtures/findings-json-clean-no-gitignore`.
-  7. `@adw-8 @regression` — "Clean scan with `.gitignore` covering `.depaudit/` writes the file and does NOT warn" using `fixtures/findings-json-clean-with-gitignore`.
-  8. `@adw-8` — "Clean scan never modifies .gitignore" assert on file bytes-equality before/after in the `findings-json-clean-with-gitignore` fixture.
+- `features/scan_json_reporter.feature` is already authored and tagged `@adw-8`; it covers the 16 scenarios enumerated in the Solution Statement's BDD coverage section. No edit required unless a later step surfaces a missing scenario.
+- Confirm the scenarios reuse the mock-Socket-server infrastructure from `scan_socket_supply_chain.feature` for the Socket-timeout and Socket-5xx cases (scenarios 7 & 8 in the feature file).
+- If the implementation decides (per the ADW-WARNING in the schema) to rename the top-level `schemaVersion`/`generatedAt` keys — or conversely to keep them and update the steps — make that edit to the feature file and/or the step file atomically in step 14 so the feature file and the rendered JSON agree.
 
-### 14. Author `scan_findings_json_steps.ts`
+### 14. Author `scan_json_reporter_steps.ts`
 
-- Create `features/step_definitions/scan_findings_json_steps.ts`. Import Given/When/Then from Cucumber plus `readFile`, `stat`, and Node's `assert/strict`.
-- New Given steps:
-  - `"a fixture repository at {string} with no \\.gitignore"` — asserts the `.gitignore` does NOT exist in the fixture.
-  - `"a fixture repository at {string} whose \\.gitignore contains {string}"` — reads `.gitignore` and asserts it contains the line (exact match after trim).
+- Create `features/step_definitions/scan_json_reporter_steps.ts`. Import Given/When/Then from Cucumber plus `readFile`, `stat`, and Node's `assert/strict`.
+- New Given steps (mirroring the feature file's Given clauses):
+  - `"a fixture Node repository at {string} whose manifests have no known CVEs"`.
+  - `"a fixture Node repository at {string} whose manifest pins a package with a known OSV CVE"`.
+  - `"a fixture Node repository at {string} whose manifest pins a package with a known OSV CVE that has a resolving upgrade version"`.
+  - `"a fixture Node repository at {string} whose manifest pins a package with a known OSV CVE that has no resolving upgrade"`.
+  - `"a fixture repository at {string} with the following manifests:"` (data-table form for polyglot).
+  - `"the repository's .gitignore excludes {string}"`.
+  - `"the repository's .gitignore does not exclude {string}"`.
+  - `"the repository has no .gitignore"`.
+  - `"the repository's osv-scanner.toml has an `[[IgnoredVulns]]` entry for that CVE's id with a valid `ignoreUntil` and a `reason` of at least 20 characters"`.
+  - `"the repository's .depaudit.yml has a `commonAndFine` entry matching that (package, alertType) pair with a valid `expires`"`.
+  - `"a mock Socket API that responds with an \"install-scripts\" alert for a package declared in that manifest"`.
+  - `"a mock Socket API that never responds within the client timeout"` (reuse infra from `scan_socket_supply_chain_steps.ts`).
+  - `"a mock Socket API that returns HTTP 503 for every request"` (ditto).
+  - `"a mock Socket API that responds with no alerts for every package"`.
+  - `"a stale {string} from a previous run exists under that repository with a single stale finding entry"`.
 - New Then steps:
-  - `".depaudit/findings.json exists in the fixture"` — `await stat(join(fixturePath, ".depaudit", "findings.json"))`.
-  - `"the findings file parses as JSON with schemaVersion 1"` — read, parse, assert `schemaVersion === 1`.
-  - `"the findings file's counts.new is {int}"` — assert integer equality.
-  - `"the findings file's sourceAvailability.socket is {string}"` — assert `"available"` or `"unavailable"`.
-  - `"the findings file contains a finding with classification {string}"` — assert some `finding.classification` matches.
-  - `"the findings file's findings array has {int} items"`.
-  - `"stdout contains the gitignore warning"` — assert `this.result.stdout` includes `"not gitignored"`.
-  - `"stdout does NOT contain the gitignore warning"` — assert negation.
-  - `".gitignore is unchanged from its pre-scan bytes"` — snapshot the file before the `When I run` step and compare after.
-- Reuse the existing `Given` / `When` steps from `scan_steps.ts` where possible (the fixture-path-verification step, the "I run depaudit scan" step).
+  - `"the file {string} is written under the scanned repository"` — `await stat(join(fixturePath, path))`.
+  - `"{string} is valid JSON"` — read + `JSON.parse` succeeds.
+  - `"{string} has a top-level {string} field set to {int}"` / `"... set to {string}"`. <!-- ADW-WARNING: the top-level field names here (scenarios: "version", "scannedAt") must agree with the reporter's output; reconcile during implementation. -->
+  - `"{string} has a top-level {string} array with length {int}"`.
+  - `"the first finding in {string} has {string} set to {string}"`.
+  - `"the first finding in {string} has non-empty {string}, {string}, {string}, {string}, {string}, and {string} fields"`.
+  - `"{string} contains a finding with {string} set to {string}"`.
+  - `"that finding has {string} set to {string}"`.
+  - `"{string} contains a finding with {string} set to {string} and {string} ending in {string}"`.
+  - `"{string} has {string} set to {string}"` (generic dotted-path getter for `sourceAvailability.osv` etc.).
+  - `"{string} contains at least one finding with {string} set to {string}"`.
+  - `"{string} documents {string} as one of: {}"` (parses the comma list, asserts the top-level `classifications` array deep-equals it).
+  - `"the first finding in {string} has an {string} field whose {string} is non-empty"`.
+  - `"the first finding in {string} has no {string} field"`.
+  - `"stdout mentions {string} and {string}"` / `"stdout does not mention {string}"`.
+  - `"{string} does not contain the stale finding entry"`.
+  - `"{string} has a top-level {string} field that is a valid ISO-8601 timestamp"`.
+- Reuse the existing `Given` / `When` steps from `scan_steps.ts` (`"I run {string}"`, exit-code assertions) and the mock-Socket-server setup from `scan_socket_supply_chain_steps.ts` where the scenario calls for it.
 - Clean up `<fixturePath>/.depaudit/` in an `After` hook specific to this step file so successive runs are reproducible.
 
 ### 15. Create the new fixture repos
 
-- `fixtures/findings-json-clean-no-gitignore/`: minimal `package.json` with no CVE deps; **no** `.gitignore`. Keep it as small as possible (3-line package.json + a `package-lock.json` with zero deps, same shape as `fixtures/clean-npm`).
-- `fixtures/findings-json-clean-with-gitignore/`: copy `findings-json-clean-no-gitignore` and add a `.gitignore` whose content is `.depaudit/\nnode_modules/\n`.
-- `fixtures/findings-json-clean-with-explicit-gitignore/`: same but `.gitignore` contains `.depaudit/findings.json\n`.
-- `fixtures/findings-json-lint-fail/`: copy `fixtures/vulnerable-npm-bad-accept` (already exists per `@adw-4` scenario) or construct a minimal fixture with a deliberately-malformed `osv-scanner.toml`. Confirm it triggers the lint-fail exit path.
+Create one fixture directory per scenario under `fixtures/json-*`. Each contains the minimum files the scenario needs — a `package.json` (+ lockfile / `requirements.txt` where relevant), a `.depaudit.yml` / `osv-scanner.toml` / `.gitignore` only where the scenario sets up those files:
+
+- `fixtures/json-clean-npm/`: clean npm, `.gitignore` excludes `.depaudit/`.
+- `fixtures/json-new-osv/`: npm, pins a package with a known OSV CVE, `.gitignore` excludes `.depaudit/`.
+- `fixtures/json-accepted-osv/`: npm + CVE + `osv-scanner.toml` with a valid `[[IgnoredVulns]]` for that CVE id.
+- `fixtures/json-whitelisted-socket/`: clean npm + `.depaudit.yml` with a `commonAndFine` entry keyed to a package/alertType the Socket mock will return.
+- `fixtures/json-schema-categories/`: clean npm; the scenario only validates the top-level `classifications` enum.
+- `fixtures/json-sources-happy/`: clean npm; both sources return successfully.
+- `fixtures/json-socket-timeout/`: npm + CVE; mock-Socket is configured to never respond.
+- `fixtures/json-socket-5xx/`: clean npm; mock-Socket returns 503.
+- `fixtures/json-polyglot/`: npm `package.json` + pip `requirements.txt`, each pinning a CVE'd package.
+- `fixtures/json-upgrade-available/`: npm + CVE with an upstream fix in OSV metadata.
+- `fixtures/json-upgrade-unavailable/`: npm + CVE with no upstream fix in OSV metadata.
+- `fixtures/json-not-gitignored/`: clean npm, `.gitignore` present but does NOT cover `.depaudit/findings.json`.
+- `fixtures/json-gitignored-dir/`: clean npm, `.gitignore` excludes `.depaudit/`.
+- `fixtures/json-no-gitignore/`: clean npm, no `.gitignore` at all.
+- `fixtures/json-rerun/`: clean npm + a pre-seeded stale `.depaudit/findings.json`.
+- `fixtures/json-scanned-at/`: clean npm; validates the ISO-8601 timestamp field (see ADW-WARNING regarding the field name).
 
 ### 16. Add the `JsonReporter` row to `UBIQUITOUS_LANGUAGE.md`
 
@@ -368,13 +407,13 @@ Execute every step in order, top to bottom.
 
 Walk the five AC bullets and confirm:
 
-1. `.depaudit/findings.json` is written on every `depaudit scan` run — verified by scenarios 1, 2, 3 and the `finalize` helper's placement at every exit point.
-2. Schema supports every classification category — verified by the mixed-classifications snapshot + scenario 5.
-3. Schema carries `sourceAvailability` — verified by `sourceAvailability.socket` assertion in scenario 4 and the `socket-unavailable.json` snapshot.
-4. If `.depaudit/findings.json` is not gitignored, warning to stdout — verified by scenarios 6 + 7 (positive and negative).
+1. `.depaudit/findings.json` is written on every `depaudit scan` run — verified by feature-file scenarios 1, 2, 3, 6, 15 and the `finalize` helper's placement at every exit point.
+2. Schema supports every classification category — verified by feature-file scenarios 2, 3, 4, 5 (covering `new`, `accepted`, `whitelisted`, and the `expired-accept` enum documentation).
+3. Schema carries `sourceAvailability` — verified by feature-file scenarios 6, 7, 8 (happy, timeout, 5xx) and the `socket-unavailable.json` snapshot.
+4. If `.depaudit/findings.json` is not gitignored, warning to stdout — verified by feature-file scenarios 12 + 13 + 14.
 5. Snapshot tests for `JsonReporter` output — verified by `jsonReporter.test.ts`.
 
-Confirm none of the changes touched `.gitignore` in any fixture (scenario 8 is the assertion).
+Confirm none of the changes touched `.gitignore` in any fixture.
 
 ## Testing Strategy
 
@@ -387,7 +426,7 @@ Confirm none of the changes touched `.gitignore` in any fixture (scenario 8 is t
 3. The issue's AC bullet 5 (`Snapshot tests for JsonReporter output`) is an explicit user requirement.
 4. The precedent of issues #3, #4, #5, #6, #7 all including unit-test tasks in their plans despite the same missing marker.
 
-The suite covers every schema branch: the empty-result arm, the mixed-classifications arm (all four `FindingCategory` values), the `socketAvailable: false` arm, the hyphen→camelCase translation, the optional-summary-null arm, the `upgradeSuggestion: null` placeholder, the `counts` tally, the `generatedAt` ISO-string shape, and the stable-sort determinism. It also covers the writer (directory creation, overwrite, byte-equality round-trip) and the gitignore detector (missing, unmatched, and three match patterns including the broad glob). Every branch's happy and error arms are covered. No unit test for `ScanCommand` itself — the integration is covered by BDD (consistent with the existing convention: `commands/` has no `__tests__` subfolder).
+The suite covers every schema branch: the empty-result arm, the mixed-classifications arm (all four `FindingCategory` values), the `socketAvailable: false` arm, the classification-hyphen pass-through, the optional-summary-null arm, the conditional-`upgrade`-field arm (present when OSV fix metadata exists; absent for Socket findings and OSV findings without a fix), the always-present `classifications` enum array, the `counts` tally (hyphenated key for `expired-accept`), the `generatedAt` ISO-string shape, and the stable-sort determinism. It also covers the writer (directory creation, overwrite, byte-equality round-trip) and the gitignore detector (missing, unmatched, and three match patterns including the broad glob). Every branch's happy and error arms are covered. No unit test for `ScanCommand` itself — the integration is covered by BDD (consistent with the existing convention: `commands/` has no `__tests__` subfolder).
 
 ### Edge Cases
 
@@ -411,13 +450,14 @@ The suite covers every schema branch: the empty-result arm, the mixed-classifica
 
 - [ ] `src/modules/jsonReporter.ts` exists and exports `renderFindingsJson`, `writeFindingsFile`, `checkGitignore`, `printGitignoreWarning`, plus the `FindingsJsonV1`, `FindingRecord`, `RenderInput`, and `GitignoreCheckResult` types.
 - [ ] `.depaudit/findings.json` is created by every `depaudit scan` invocation — success, lint-failure, config-parse-failure, and socket-auth-failure paths all call `finalize` before returning.
-- [ ] The JSON schema contains `schemaVersion: 1`, `generatedAt`, `sourceAvailability.{osv,socket}`, `counts.{new,accepted,whitelisted,expiredAccept}`, and a `findings[]` array sorted by `(classification, ecosystem, package, version, findingId, manifestPath)`.
-- [ ] Every `FindingCategory` from `FindingMatcher` is representable in the schema; `"expired-accept"` is translated to `"expiredAccept"`.
+- [ ] The JSON schema contains `schemaVersion: 1` <!-- ADW-WARNING: scenarios assert "version" — reconcile during implementation. -->, `generatedAt` <!-- ADW-WARNING: scenarios assert "scannedAt" — reconcile during implementation. -->, `sourceAvailability.{osv,socket}`, `classifications: ["new","accepted","whitelisted","expired-accept"]`, `counts.{new,accepted,whitelisted,"expired-accept"}`, and a `findings[]` array sorted by `(classification, ecosystem, package, version, findingId, manifestPath)`.
+- [ ] Every `FindingCategory` from `FindingMatcher` is representable in the schema; the hyphenated `"expired-accept"` form flows through verbatim (no translation).
+- [ ] Each `findings[]` record carries an optional `upgrade: { suggestedVersion: string }` — present when an upstream fix is known (OSV), absent entirely otherwise (Socket findings, OSV findings with no fix).
 - [ ] `sourceAvailability.socket === "unavailable"` when the scan went fail-open on Socket (5xx/timeout/429 exhausted or auth error).
 - [ ] When `.depaudit/findings.json` is not gitignored by `<scanPath>/.gitignore`, a single `warning:` line is emitted to stdout; exit code is unchanged.
 - [ ] `depaudit scan` never modifies `<scanPath>/.gitignore`.
 - [ ] `src/modules/__tests__/jsonReporter.test.ts` covers every schema branch, writer branch, and gitignore-detector branch with snapshot or explicit-value assertions.
-- [ ] `features/scan_findings_json.feature` covers 8 scenarios tagged `@adw-8`; at least 7 carry `@regression`.
+- [ ] `features/scan_json_reporter.feature` covers the 16 authored scenarios tagged `@adw-8` (11 carry `@regression`).
 - [ ] All existing `@adw-3` … `@adw-7` `@regression` BDD scenarios continue to pass unchanged.
 - [ ] `bun run typecheck`, `bun run lint`, `bun test`, `bun run build` all exit 0.
 - [ ] `UBIQUITOUS_LANGUAGE.md` has a new `JsonReporter` row in the Modules table.
@@ -443,7 +483,7 @@ From `.adw/commands.md`:
 - **No new libraries required.** `node:fs/promises`, `node:path`, `node:os` are built-in. `ignore` is already a direct dependency (`package.json:27`). Per `.adw/commands.md` a new library would use `bun add <name>`; none is needed for this slice.
 - **No `guidelines/` directory** exists in this repo; no guideline-specific refactoring obligations apply.
 - **Schema stability contract.** `schemaVersion: 1` is intentional — a future breaking change (removing or renaming a top-level key) MUST bump this field and the triage skill MUST reject unknown major-version schemas. This plan does not introduce a version-check in the skill (out of scope), but the field is there from day one.
-- **`upgradeSuggestion` placeholder.** Shipped as `null` on every finding in this slice. The resolver that populates it lives in a later ADW issue (see PRD remediation policy `:168-174`). Committing the field now avoids a schema churn when the resolver lands — the skill author can code against the final shape today.
+- **`upgrade` field is populated from OSV-Scanner's fix metadata in this slice** — where applicable (per the issue body). For OSV findings with a known resolving version, the reporter emits `upgrade: { suggestedVersion: <version> }`; for OSV findings with no fix and every Socket finding, the key is omitted. No separate "resolver" slice is required because the version comes from data OSV already returns; any later work will be to unify the schema across additional sources, not to introduce the field.
 - **`sourceAvailability.osv` is always `"available"` today.** This reflects that OSV-Scanner currently aborts the whole run on error rather than failing open. A future fail-open-on-OSV slice would flip the field; no schema change needed.
 - **Warning goes to `stdout`, not `stderr`.** The issue body is explicit: "warning to stdout (but no fatal)". `stdoutReporter` and `printFindings` are the only other stdout writers; this keeps the warning where the finding lines are so a human glancing at `depaudit scan` output sees it with the rest of the run's output. Machine consumers already read the JSON file, not the stdout.
 - **No mutation of `.gitignore`.** Enforced by never importing or calling `writeFile` with a `.gitignore` path anywhere in `ScanCommand` or `JsonReporter`. The BDD scenario 8 asserts byte-equality before/after as the regression guard.
