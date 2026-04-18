@@ -1,0 +1,3 @@
+[[IgnoredVulns]]
+id = "CVE-2021-23337"
+ignoreUntil = {{IGNORE_UNTIL_30D}}

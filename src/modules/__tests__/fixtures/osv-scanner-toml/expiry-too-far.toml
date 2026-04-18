@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "CVE-2021-23337"
+ignoreUntil = {{IGNORE_UNTIL_180D}}
+reason = "upstream fix pending in 4.17.21"
