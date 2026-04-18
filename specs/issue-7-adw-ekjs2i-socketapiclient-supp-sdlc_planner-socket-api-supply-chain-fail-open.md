@@ -461,7 +461,7 @@ Build-agent responsibilities for this step:
 - `bun test` — all unit tests pass (the new `socketApiClient.test.ts` suite plus every pre-existing suite).
 - `bun run build` — `dist/cli.js` rebuilt, `chmod +x` applied by postbuild.
 - `bun run test:e2e -- --tags "@adw-7"` — every new supply-chain scenario passes against the mock server.
-- `bun run test:e2e -- --tags "@regression"` — every prior `@regression` scenario across `@adw-3`, `@adw-4`, `@adw-5`, `@adw-6` continues to pass. The stdout-reporter source-tag extension is the only pre-existing-behaviour change; the widened regex in step definitions accepts both old and new formats.
+- `bun run test:e2e -- --tags "@regression"` — every prior `@regression` scenario across `@adw-3`, `@adw-4`, `@adw-5`, `@adw-6` continues to pass unchanged. The `stdoutReporter` format is preserved as-is (4 fields); no existing regex or scenario needs updating.
 
 ## Testing Strategy
 
