@@ -83,11 +83,14 @@ Use these files to implement the feature:
 - `src/modules/__tests__/configLoader.test.ts` — Extended with a `describe("loadDepauditConfig", ...)` block covering empty-file default, single-`commonAndFine`, single-`supplyChainAccepts`, malformed YAML (parse-error line/col), and `sourceLine` attachment.
 - `src/modules/__tests__/linter.test.ts` — Extended with a `describe("lintDepauditConfig", ...)` block covering one test per YAML rule plus boundary and combined cases.
 - `src/modules/__tests__/fixtures/depaudit-yml/` — New directory of `.depaudit.yml` fixtures analogous to `osv-scanner-toml/`. Uses the same `{{EXPIRES_xxx}}` date-placeholder convention as the TOML fixtures.
-- `features/lint.feature` — Existing `@adw-4` feature file. Extended with `@adw-5` scenarios for `.depaudit.yml` lint behavior.
+- `features/lint.feature` — Existing `@adw-4` feature file. Remains unchanged by this slice; `.depaudit.yml` lint scenarios live in a new file below.
+- `features/lint_depaudit_yml.feature` — New `@adw-5` feature file covering `.depaudit.yml` schema validation (clean, missing, malformed, missing-version, bad-version, missing-policy defaults, severityThreshold enum, supplyChainAccepts rules, commonAndFine rules, ecosystems, multi-error, combined osv-scanner.toml + .depaudit.yml errors).
 - `features/scan.feature` — Existing `@adw-3` feature file. Existing scenarios must continue to pass (no regression from the new YAML pre-flight when `.depaudit.yml` is absent).
 - `features/scan_accepts.feature` — Existing `@adw-4` feature file. Existing scenarios must continue to pass.
+- `features/scan_severity_threshold.feature` — New `@adw-5` feature file covering the severity-threshold filter on the "new" bucket (default medium, threshold high/critical, inclusive boundary, invalid enum lint pre-flight, mixed-severity filtering).
+- `features/scan_yml_accepts.feature` — New `@adw-5` feature file covering `depaudit scan` lint pre-flight across both config files and the four-way classification's CLI-observable outcome (clean, malformed, expired supplyChainAccepts / commonAndFine, overcap commonAndFine, unrelated supplyChainAccepts, osv-scanner.toml-accepted finding while `.depaudit.yml` is populated).
 - `features/step_definitions/lint_steps.ts` — Extended with `Given` steps that materialize `.depaudit.yml` into fixture directories, mirroring the existing `writeTomL` helper.
-- `features/step_definitions/scan_accepts_steps.ts` — Existing. New `@adw-5` scan scenarios may need new `Given` steps here or in a new `scan_classify_steps.ts` file if the count grows.
+- `features/step_definitions/scan_accepts_steps.ts` — Existing. May be extended with shared step definitions, or new step-definition files (`scan_severity_threshold_steps.ts`, `scan_yml_accepts_steps.ts`) added if the count grows.
 - `features/support/world.ts` — Reused unchanged; the `writtenFiles` cleanup covers both `osv-scanner.toml` and `.depaudit.yml` generically.
 - `package.json` — Needs `yaml` added to `dependencies` via `bun add yaml`.
 - `bun.lock` — Will be updated by the `bun add` step.
@@ -101,7 +104,7 @@ Use these files to implement the feature:
   - `interface DepauditPolicy { severityThreshold: SeverityThreshold; ecosystems: EcosystemsOption; maxAcceptDays: number; maxCommonAndFineDays: number }`
   - `interface CommonAndFineEntry { package: string; alertType: string; expires: string; reason?: string; sourceLine?: number }`
   - `interface SupplyChainAccept { package: string; version: string; alertType: string; expires: string; reason: string; upstreamIssue?: string; sourceLine?: number }`
-  - `interface DepauditConfig { version: number; policy: DepauditPolicy; commonAndFine: CommonAndFineEntry[]; supplyChainAccepts: SupplyChainAccept[]; filePath: string | null }`
+  - `interface DepauditConfig { version: number | undefined; policy: DepauditPolicy; commonAndFine: CommonAndFineEntry[]; supplyChainAccepts: SupplyChainAccept[]; filePath: string | null }` (version is `undefined` when the YAML omits it, so `lintDepauditConfig` can flag it as a missing required field per PRD rule 2)
   - `type Classification = "new" | "accepted" | "whitelisted" | "expired-accept"`
   - `interface AcceptanceMatch { kind: "ignored-vuln" | "supply-chain-accept" | "common-and-fine"; expires: string; reason?: string; sourceLine?: number }`
   - `interface ClassifiedFinding { finding: Finding; classification: Classification; match?: AcceptanceMatch }`
@@ -121,6 +124,7 @@ Use these files to implement the feature:
 - `src/modules/__tests__/fixtures/depaudit-yml/common-expired.yml` — `commonAndFine[0].expires` in the past.
 - `src/modules/__tests__/fixtures/depaudit-yml/common-duplicate.yml` — Two `commonAndFine` entries with identical `(package, alertType)`.
 - `src/modules/__tests__/fixtures/depaudit-yml/bad-version.yml` — `version: 99` (unsupported; halt with migration guidance).
+- `src/modules/__tests__/fixtures/depaudit-yml/missing-version.yml` — no `version` field (required-field violation; halt with missing-field message).
 - `src/modules/__tests__/fixtures/depaudit-yml/bad-ecosystems.yml` — `policy.ecosystems: "nonsense"` (not `"auto"` or an array).
 
 ## Implementation Plan
@@ -148,7 +152,13 @@ Wire the new modules into the two composition roots:
 
 ### Phase 4: BDD Coverage
 
-Add `@adw-5`-tagged scenarios to `features/lint.feature` for `.depaudit.yml` lint behavior and create a small new `features/scan_classify.feature` for the severity-threshold filter + classification-driven stdout behavior. Extend `features/step_definitions/lint_steps.ts` with `Given` steps that materialize `.depaudit.yml` into fixtures (mirroring the existing `writeTomL` helper). Reuse shared `Then` assertions where phrasing matches. Run `bun run test:e2e` and confirm every `@adw-3`, `@adw-4`, and `@adw-5` scenario passes with zero pendings.
+The `@adw-5`-tagged scenarios live in three dedicated new feature files (not in extensions of `features/lint.feature`):
+
+- `features/lint_depaudit_yml.feature` — all `.depaudit.yml` lint scenarios: clean, missing, malformed, missing-version, bad-version, default-policy, severityThreshold enum (medium / high / critical / low / bogus), supplyChainAccepts (overcap / boundary / expired / short-reason / boundary-reason / duplicate / missing-reason), commonAndFine (overcap / boundary / expired), ecosystems (auto / bogus), multi-error, and combined `osv-scanner.toml` + `.depaudit.yml` errors.
+- `features/scan_severity_threshold.feature` — the severity-threshold filter on the "new" bucket: default medium (absent yml / omitted policy), default still reports MEDIUM, threshold high drops MEDIUM, threshold high reports HIGH, threshold critical drops HIGH, threshold critical reports CRITICAL, inclusive-boundary (finding AT threshold is reported), invalid enum aborts via lint pre-flight, mixed-severity filtering.
+- `features/scan_yml_accepts.feature` — scan-time lint pre-flight across both config files and the four-way classification's CLI-observable outcome: clean yml, malformed yml abort, expired supplyChainAccepts abort, expired commonAndFine abort, overcap commonAndFine abort, unrelated supplyChainAccepts (surfaces `new`), osv-scanner.toml `[[IgnoredVulns]]` match surfaces `accepted` (exit 0).
+
+Extend `features/step_definitions/lint_steps.ts` with `Given` steps that materialize `.depaudit.yml` into fixtures (mirroring the existing `writeTomL` helper). Add new step-definition files (or extend existing ones) for the scan-side scenarios as needed; reuse shared `Then` assertions (exit code, stderr mentions, stdout line counts) where phrasing matches existing steps. Run `bun run test:e2e` and confirm every `@adw-3`, `@adw-4`, and `@adw-5` scenario passes with zero pendings.
 
 ## Step by Step Tasks
 Execute every step in order, top to bottom.
@@ -166,7 +176,7 @@ Execute every step in order, top to bottom.
   - `interface DepauditPolicy { severityThreshold: SeverityThreshold; ecosystems: EcosystemsOption; maxAcceptDays: number; maxCommonAndFineDays: number }`
   - `interface CommonAndFineEntry { package: string; alertType: string; expires: string; reason?: string; sourceLine?: number }`
   - `interface SupplyChainAccept { package: string; version: string; alertType: string; expires: string; reason: string; upstreamIssue?: string; sourceLine?: number }`
-  - `interface DepauditConfig { version: number; policy: DepauditPolicy; commonAndFine: CommonAndFineEntry[]; supplyChainAccepts: SupplyChainAccept[]; filePath: string | null }`
+  - `interface DepauditConfig { version: number | undefined; policy: DepauditPolicy; commonAndFine: CommonAndFineEntry[]; supplyChainAccepts: SupplyChainAccept[]; filePath: string | null }` (version is `undefined` when missing from the YAML so `lintDepauditConfig` can flag it as fatal per PRD rule 2)
   - `type Classification = "new" | "accepted" | "whitelisted" | "expired-accept"`
   - `interface AcceptanceMatch { kind: "ignored-vuln" | "supply-chain-accept" | "common-and-fine"; expires: string; reason?: string; sourceLine?: number }`
   - `interface ClassifiedFinding { finding: Finding; classification: Classification; match?: AcceptanceMatch }` (import `Finding` from `./finding.js`)
@@ -184,7 +194,7 @@ Execute every step in order, top to bottom.
     4. Convert the `Document` to plain JS via `doc.toJS()`. Merge with `DEFAULT_POLICY` so callers see a fully-populated policy even when the YAML omits fields (explicit values in the YAML win).
     5. Attach `sourceLine` to each entry by mapping the YAML node positions (`yaml` v2 exposes `.range` on nodes; convert byte-offsets to line numbers by counting `\n` up to `range[0]`). Keeping this approximate is fine; same philosophy as `loadOsvScannerConfig`.
     6. Return the shaped `DepauditConfig`.
-- Do NOT enforce rules in `ConfigLoader` — that is `Linter`'s job. If `version` is missing, default to `1` but do not throw; `lintDepauditConfig` will flag mismatches. If `commonAndFine` or `supplyChainAccepts` is absent, default to `[]`.
+- Do NOT enforce rules in `ConfigLoader` — that is `Linter`'s job. If `version` is missing, pass it through as `undefined` (do NOT default); `lintDepauditConfig` flags it as a missing required field per PRD rule 2. If `commonAndFine` or `supplyChainAccepts` is absent, default to `[]`. If `policy` is absent or partial, merge with `DEFAULT_POLICY` so callers always see a fully-populated policy.
 - Export the function. Keep `loadOsvScannerConfig` unchanged.
 
 ### Create `.depaudit.yml` fixtures
@@ -209,7 +219,7 @@ Execute every step in order, top to bottom.
   - Add `import { DEFAULT_POLICY } from "../types/depauditConfig.js";` and the needed YAML type imports.
   - Add `export function lintDepauditConfig(config: DepauditConfig, now: Date = new Date()): LintResult`.
   - Local helpers, one per rule:
-    - `checkVersion(config)` — if `config.version !== 1`, push fatal `"schema version <v> is not supported; expected 1; manual migration required"`.
+    - `checkVersion(config)` — if `config.version` is `undefined` (YAML omitted the field), push fatal `"required field 'version' is missing"`. Else if `config.version !== 1`, push fatal `"schema version <v> is not supported; expected 1; manual migration required"`.
     - `checkSeverityThreshold(policy)` — if not in `{"medium","high","critical"}`, push fatal `"policy.severityThreshold must be one of medium | high | critical (got: <v>)"`.
     - `checkEcosystems(policy)` — if not `"auto"` and not an array of known ecosystem strings, push fatal `"policy.ecosystems must be \"auto\" or an array of ecosystems (got: <v>)"`.
     - `checkMaxAcceptDays(policy)` — if `> 90`, push fatal `"policy.maxAcceptDays must not exceed 90 (got: <v>)"`.
@@ -237,6 +247,7 @@ Execute every step in order, top to bottom.
     1. `empty.yml` (just `version: 1` with default policy merged in) → `isClean: true`.
     2. `valid-full.yml` → `isClean: true`.
     3. `bad-version.yml` → one fatal mentioning "migration".
+    3b. `missing-version.yml` → one fatal mentioning "version" + "missing" (missing required field, distinct from the migration path).
     4. `bad-severity.yml` → one fatal mentioning "severityThreshold" + "medium | high | critical".
     5. `bad-ecosystems.yml` → one fatal mentioning "ecosystems".
     6. `accept-over-90d.yml` → one fatal mentioning "90" + "exceed" or "cap".
@@ -311,28 +322,63 @@ Execute every step in order, top to bottom.
 
 ### Add `@adw-5` BDD scenarios
 
-- Extend `features/lint.feature` with an `@adw-5` section containing scenarios for the YAML rules:
-  - Clean `.depaudit.yml` → exit 0.
-  - Missing `.depaudit.yml` is treated as clean (just defaults).
-  - Malformed `.depaudit.yml` → exit non-zero, stderr mentions `.depaudit.yml` with line/col.
-  - `policy.severityThreshold: "low"` → exit non-zero, stderr mentions "severityThreshold".
-  - `supplyChainAccepts[0].expires` > today + 90 days → exit non-zero, stderr mentions "90".
-  - `supplyChainAccepts[0].reason` shorter than 20 chars → exit non-zero, stderr mentions "reason" + "20".
-  - `commonAndFine[0].expires` > today + 365 days → exit non-zero, stderr mentions "365".
+Three dedicated `@adw-5` feature files house the scenarios (no extension of `features/lint.feature`):
+
+- `features/lint_depaudit_yml.feature` — `.depaudit.yml` lint scenarios:
+  - Clean `.depaudit.yml` with version 1, default policy, empty registers → exit 0.
+  - Missing `.depaudit.yml` treated as clean.
+  - Malformed YAML → exit non-zero, stderr mentions `.depaudit.yml` + line + column.
+  - Missing required `version` field → exit non-zero, stderr mentions "version".
+  - Unsupported `version: 999` → exit non-zero, stderr mentions "version" + "migration".
+  - `version: 1` and no `policy` block → exit 0 (default severityThreshold is medium).
+  - `severityThreshold` accepts `medium` / `high` / `critical` → exit 0 per enum value.
+  - `severityThreshold` rejects `low` → exit non-zero, stderr mentions "severityThreshold" + all three valid values.
+  - `severityThreshold` rejects arbitrary string → exit non-zero, stderr mentions "severityThreshold".
+  - `supplyChainAccepts[0].expires` > today + 90 days → exit non-zero, stderr mentions "expires" + 90-day cap.
+  - `supplyChainAccepts[0].expires` exactly today + 90 days → exit 0.
+  - `supplyChainAccepts[0].expires` in past → exit non-zero, stderr mentions "expires" + past.
+  - `supplyChainAccepts[0].reason` shorter than 20 chars → exit non-zero, stderr mentions "reason" + 20-char minimum.
+  - `supplyChainAccepts[0].reason` exactly 20 chars → exit 0.
   - Duplicate `supplyChainAccepts` on `(package, version, alertType)` → exit 0, stderr mentions "duplicate".
-  - `version: 99` → exit non-zero, stderr mentions "migration" or "version".
-- Create `features/scan_classify.feature` (new file, all `@adw-5`) with focused scenarios for the severity threshold + classification-driven stdout:
-  - Repo with one `HIGH`-severity finding, `policy.severityThreshold: "high"` → finding is reported (exit 1).
-  - Repo with one `HIGH`-severity finding, `policy.severityThreshold: "critical"` → finding is dropped (exit 0, no stdout lines).
-  - Repo with one finding accepted in `supplyChainAccepts` (valid non-expired) → stdout empty, exit 0.
-  - Repo with one finding whose accept is in `supplyChainAccepts` but expired → stdout contains the finding (classified `expired-accept`, still reported), exit 1.
-  - Repo with `commonAndFine` matching the finding → stdout empty, exit 0.
+  - `supplyChainAccepts[0]` missing `reason` → exit non-zero, stderr mentions "reason".
+  - `commonAndFine[0].expires` > today + 365 days → exit non-zero, stderr mentions "expires" + 365-day cap.
+  - `commonAndFine[0].expires` exactly today + 365 days → exit 0.
+  - `commonAndFine[0].expires` in past → exit non-zero, stderr mentions "expires" + past.
+  - `policy.ecosystems: "auto"` → exit 0.
+  - `policy.ecosystems` list with unknown "foo" → exit non-zero, stderr mentions "ecosystems" + "foo".
+  - Multiple YAML errors → exit non-zero, all errors surfaced in stderr.
+  - Combined `osv-scanner.toml` + `.depaudit.yml` errors → exit non-zero, stderr mentions both filenames.
+- `features/scan_severity_threshold.feature` — severity-threshold filter scenarios:
+  - LOW finding + no `.depaudit.yml` (default medium) → exit 0, no stdout findings.
+  - LOW finding + yml with `version: 1` but no `policy` block → exit 0, no stdout findings.
+  - MEDIUM finding + no `.depaudit.yml` (default medium) → exit non-zero, stdout reports finding (inclusive boundary at default).
+  - MEDIUM finding + `severityThreshold: "high"` → exit 0, no stdout findings.
+  - HIGH finding + `severityThreshold: "high"` → exit non-zero, stdout reports finding.
+  - HIGH finding + `severityThreshold: "critical"` → exit 0, no stdout findings.
+  - CRITICAL finding + `severityThreshold: "critical"` → exit non-zero, stdout reports finding.
+  - MEDIUM finding + `severityThreshold: "medium"` → exit non-zero, stdout reports finding (explicit inclusive boundary).
+  - `severityThreshold: "low"` (invalid) → exit non-zero via lint pre-flight, stderr mentions "severityThreshold", no stdout findings.
+  - Mixed MEDIUM+HIGH findings + `severityThreshold: "high"` → exit non-zero, exactly one stdout finding line containing "HIGH".
+- `features/scan_yml_accepts.feature` — scan-time lint pre-flight + classification CLI-observable outcome:
+  - Clean yml (`version: 1`, default policy, empty registers) + OSV CVE present → exit non-zero, stdout reports finding.
+  - Malformed yml + OSV CVE present → exit non-zero, stderr mentions `.depaudit.yml` + line, no stdout findings.
+  - Expired `supplyChainAccepts` entry + OSV CVE → exit non-zero (lint aborts), stderr mentions "expires" + past, no stdout findings.
+  - Expired `commonAndFine` entry + OSV CVE → exit non-zero (lint aborts), stderr mentions "expires" + past, no stdout findings.
+  - `commonAndFine` entry beyond 365-day cap + OSV CVE → exit non-zero (lint aborts), stderr mentions "expires" + 365-day cap, no stdout findings.
+  - Valid unrelated `supplyChainAccepts` entry + OSV CVE → exit non-zero, stdout reports finding (surfaces `new`).
+  - `osv-scanner.toml` `[[IgnoredVulns]]` matching the CVE + clean yml → exit 0, no stdout findings (surfaces `accepted`).
 - Extend `features/step_definitions/lint_steps.ts` with:
   - `writeDepauditYaml(world, fixturePath, content)` helper (mirror of the existing `writeTomL`).
-  - `Given` steps for each YAML scenario (one per scenario above — copy the existing TOML-style phrasing with "depaudit.yml" substituted).
-- Create the scan-classify fixtures (`fixtures/vulnerable-npm-threshold-high/`, `fixtures/vulnerable-npm-threshold-critical/`, `fixtures/vulnerable-npm-commonfine/`, `fixtures/vulnerable-npm-supplychain-accept/`, `fixtures/vulnerable-npm-expired-supplychain/`) — all copies of `fixtures/vulnerable-npm/` with an added `.depaudit.yml` materialized at step-definition time from placeholders.
-- Extend `features/step_definitions/scan_accepts_steps.ts` (or add a new `scan_classify_steps.ts`) with `Given` steps that materialize the `.depaudit.yml` for each classify scenario.
+  - `Given` steps to materialize `.depaudit.yml` with placeholders (`{{EXPIRES_+90D}}`, `{{EXPIRES_+365D}}`, `{{EXPIRES_-7D}}`, `{{EXPIRES_+120D}}`, `{{EXPIRES_+400D}}`, etc.) for the scenarios above.
+- Create the `@adw-5` fixture directories matching the scenarios (all copies of `fixtures/clean-npm/` or `fixtures/vulnerable-npm/` augmented with a `.depaudit.yml` materialized at step-definition time from placeholders). The fixture set includes, at minimum:
+  - Lint-side fixtures: `fixtures/yml-clean`, `fixtures/yml-malformed`, `fixtures/yml-missing-version`, `fixtures/yml-bad-version`, `fixtures/yml-default-policy`, `fixtures/yml-threshold-medium`, `fixtures/yml-threshold-high`, `fixtures/yml-threshold-critical`, `fixtures/yml-threshold-low`, `fixtures/yml-threshold-bogus`, `fixtures/yml-sca-overcap`, `fixtures/yml-sca-boundary`, `fixtures/yml-sca-expired`, `fixtures/yml-sca-short-reason`, `fixtures/yml-sca-boundary-reason`, `fixtures/yml-sca-duplicate`, `fixtures/yml-sca-missing-reason`, `fixtures/yml-caf-overcap`, `fixtures/yml-caf-boundary`, `fixtures/yml-caf-expired`, `fixtures/yml-ecosystems-auto`, `fixtures/yml-ecosystems-bogus`, `fixtures/yml-multi-error`, `fixtures/yml-and-toml-errors`.
+  - Severity-threshold fixtures (each pins a package with a known finding of the stated severity): `fixtures/low-finding-npm`, `fixtures/low-finding-default-yml`, `fixtures/medium-finding-npm`, `fixtures/medium-finding-threshold-high`, `fixtures/medium-finding-threshold-medium`, `fixtures/high-finding-threshold-high`, `fixtures/high-finding-threshold-critical`, `fixtures/critical-finding-threshold-critical`, `fixtures/threshold-invalid-enum`, `fixtures/mixed-severity-threshold-high`.
+  - Scan-yml-accepts fixtures: `fixtures/vulnerable-npm-yml-clean`, `fixtures/vulnerable-npm-yml-malformed`, `fixtures/vulnerable-npm-yml-expired-sca`, `fixtures/vulnerable-npm-yml-expired-caf`, `fixtures/vulnerable-npm-yml-overcap-caf`, `fixtures/vulnerable-npm-yml-unrelated-sca`, `fixtures/vulnerable-npm-yml-and-toml-accept`.
+- Extend `features/step_definitions/scan_accepts_steps.ts` (or add new `scan_severity_threshold_steps.ts` / `scan_yml_accepts_steps.ts` files) with `Given` steps that materialize the `.depaudit.yml` / `osv-scanner.toml` for each scan scenario.
 - Run `bun run test:e2e` — all `@adw-3`, `@adw-4`, and `@adw-5` scenarios must pass; no pendings.
+
+<!-- ADW-WARNING: The severity-threshold fixtures (`fixtures/low-finding-npm`, `fixtures/medium-finding-npm`, `fixtures/high-finding-threshold-*`, `fixtures/critical-finding-threshold-*`, `fixtures/mixed-severity-threshold-high`) require real manifest pins to real packages with known OSV findings at the stated severity levels. The build agent must identify specific package-version pairs whose OSV severity rating matches; if no stable LOW / MEDIUM / CRITICAL example is available on the current OSV database, those scenarios may need synthetic or test-DB findings. Verify the OSV-Scanner output severity for each candidate package before materializing these fixtures. -->
+
 
 ### Smoke-test end-to-end
 
@@ -355,16 +401,17 @@ Execute every step in order, top to bottom.
 
 Concrete test suites:
 
-- **`ConfigLoader` — extended `configLoader.test.ts`**: new `describe("loadDepauditConfig")` block with 5 fixture-driven cases: absent file → defaults, `empty.yml` → defaults + `version: 1`, `valid-full.yml` → fully populated, `malformed.yml` → `ConfigParseError` with `line`/`column`/`filePath`/`message`, `sourceLine` attached per entry.
-- **`Linter` — extended `linter.test.ts`**: new `describe("lintDepauditConfig")` block with 17 cases: one per rule (13 rules listed in the Linter section), three boundary cases (90d / 365d / today), one combined-violations case.
+- **`ConfigLoader` — extended `configLoader.test.ts`**: new `describe("loadDepauditConfig")` block with 5 fixture-driven cases: absent file → defaults (version `undefined`), `empty.yml` → defaults merged with `version: 1`, `valid-full.yml` → fully populated, `malformed.yml` → `ConfigParseError` with `line`/`column`/`filePath`/`message`, `sourceLine` attached per entry.
+- **`Linter` — extended `linter.test.ts`**: new `describe("lintDepauditConfig")` block with 18 cases: one per rule (14 rules — 13 listed in the Linter section plus the missing-version rule), three boundary cases (90d / 365d / today), one combined-violations case.
 - **`FindingMatcher` — new `findingMatcher.test.ts`**: 15 cases listed above. Purely in-memory — matcher is pure, no fixture files needed.
 
 All unit tests run under `bun test` (Vitest). Date logic is deterministic via injected `now` values.
 
 ### BDD Scenarios (`@adw-5`)
 
-- **`features/lint.feature` `@adw-5` additions** (9 scenarios): one per YAML lint rule + clean/missing/malformed baseline.
-- **`features/scan_classify.feature` `@adw-5`** (5 scenarios): severity-threshold filter, supplyChainAccept suppression, expired-supplyChainAccept still-reported, commonAndFine whitelisting.
+- **`features/lint_depaudit_yml.feature` `@adw-5`** (24 scenarios): one per YAML lint rule + clean/missing/malformed/missing-version/bad-version/default-policy baselines + boundary cases + multi-error + combined-file errors.
+- **`features/scan_severity_threshold.feature` `@adw-5`** (10 scenarios): default threshold on LOW/MEDIUM findings, threshold-high on MEDIUM/HIGH, threshold-critical on HIGH/CRITICAL, inclusive boundary, invalid enum pre-flight, mixed-severity filter.
+- **`features/scan_yml_accepts.feature` `@adw-5`** (7 scenarios): clean-yml pass-through, malformed abort, expired supplyChainAccepts / commonAndFine / overcap aborts, unrelated supplyChainAccepts surfaces `new`, TOML IgnoredVulns surfaces `accepted`.
 - All `@adw-5` scenarios plus the existing `@adw-3` / `@adw-4` suites must pass under `bun run test:e2e` with zero pendings.
 
 ### Edge Cases
@@ -385,7 +432,7 @@ All unit tests run under `bun test` (Vitest). Date logic is deterministic via in
 - `bun add yaml` has run; `yaml` appears in `package.json` `dependencies`; `bun.lock` is committed with the resolution.
 - `src/types/depauditConfig.ts` exists with all canonical YAML-schema and classifier types plus `DEFAULT_POLICY`.
 - `ConfigLoader` gains `loadDepauditConfig(repoRoot)` returning a typed `DepauditConfig`; parse errors throw `ConfigParseError` carrying `filePath`, `line`, `column`, `message`; absent file returns a fully-populated default config; `sourceLine` attached per entry.
-- `Linter` gains `lintDepauditConfig(config, now?)`, pure, returning `{ errors, warnings, isClean }`. Every PRD rule applicable to the YAML is implemented: schema version (halt on mismatch with migration guidance), `severityThreshold` enum, `ecosystems` enum/array, `maxAcceptDays` ≤ 90 cap, `maxCommonAndFineDays` ≤ 365 cap, `supplyChainAccepts.expires` 90d cap / not-past / ISO-8601, `supplyChainAccepts.reason` ≥ 20 chars, `commonAndFine.expires` 365d cap / not-past / ISO-8601, duplicate detection on both arrays (as warnings).
+- `Linter` gains `lintDepauditConfig(config, now?)`, pure, returning `{ errors, warnings, isClean }`. Every PRD rule applicable to the YAML is implemented: missing required `version` field (halt with "missing" message), schema version (halt on mismatch with migration guidance), `severityThreshold` enum, `ecosystems` enum/array, `maxAcceptDays` ≤ 90 cap, `maxCommonAndFineDays` ≤ 365 cap, `supplyChainAccepts.expires` 90d cap / not-past / ISO-8601, `supplyChainAccepts.reason` ≥ 20 chars, `commonAndFine.expires` 365d cap / not-past / ISO-8601, duplicate detection on both arrays (as warnings).
 - `FindingMatcher` (`src/modules/findingMatcher.ts`) exports `classifyFindings(findings, depauditConfig, osvConfig, now?)` returning `ClassifiedFinding[]` with the four-way classification `new | accepted | whitelisted | expired-accept`. Severity threshold filter drops findings below `policy.severityThreshold` from the output entirely (they do not become `new`).
 - `depaudit scan` loads and lints both config files; aborts on parse error (exit 2) or fatal lint (exit 1) from either; on success, classifies findings and emits only the `new` + `expired-accept` subset; exits `0` iff that subset is empty.
 - `depaudit lint` loads and lints both config files; prints each result; exits `0` (clean/warnings-only), `1` (fatal from either), `2` (parse error from either).
@@ -394,7 +441,7 @@ All unit tests run under `bun test` (Vitest). Date logic is deterministic via in
 - `bun run build` exits 0 and produces `dist/modules/findingMatcher.js`, `dist/types/depauditConfig.js`, and the extended `dist/modules/configLoader.js` / `dist/modules/linter.js`.
 - `UBIQUITOUS_LANGUAGE.md` terms preserved: new code uses **`FindingMatcher`**, **Common-and-fine entry**, **Severity threshold**, **Acceptance**, **Acceptance Register**; avoids "allowlist" except for `commonAndFine`; avoids "classifier" outside the module's internal documentation.
 - Existing `features/scan.feature` (`@adw-3`) and `features/lint.feature` / `features/scan_accepts.feature` (`@adw-4`) scenarios all continue to pass — the new YAML pre-flight is a no-op when `.depaudit.yml` is absent (the case for the `@adw-3` / `@adw-4` fixtures that predate this slice).
-- New `@adw-5` scenarios in `features/lint.feature` and `features/scan_classify.feature` pass via `bun run test:e2e`, backed by the new `fixtures/vulnerable-npm-threshold-*` / `fixtures/vulnerable-npm-commonfine/` / `fixtures/vulnerable-npm-supplychain-accept/` / `fixtures/vulnerable-npm-expired-supplychain/` fixture families.
+- New `@adw-5` scenarios in `features/lint_depaudit_yml.feature`, `features/scan_severity_threshold.feature`, and `features/scan_yml_accepts.feature` pass via `bun run test:e2e`, backed by the `@adw-5` fixture families enumerated in the "Add @adw-5 BDD scenarios" step (`fixtures/yml-*`, `fixtures/low-finding-*` / `fixtures/medium-finding-*` / `fixtures/high-finding-*` / `fixtures/critical-finding-*` / `fixtures/mixed-severity-*` / `fixtures/threshold-invalid-enum`, and `fixtures/vulnerable-npm-yml-*`).
 - `depaudit scan` on a repo with `.depaudit.yml` declaring `policy.severityThreshold: "critical"` produces no stdout findings for a `HIGH`-severity finding and exits `0` — manually verifiable via the smoke-test step.
 
 ## Validation Commands
@@ -408,7 +455,7 @@ Execute every command to validate the feature works correctly with zero regressi
 - `bun test` — runs Vitest; all unit tests pass, including the new `loadDepauditConfig`, `lintDepauditConfig`, and `findingMatcher` suites. No pre-existing tests fail.
 - `node dist/cli.js --help` — USAGE output remains well-formed; exit 0.
 - `node dist/cli.js lint fixtures/clean-npm/` — exit 0, no stderr (no `.depaudit.yml` and no `osv-scanner.toml` — both treated as clean).
-- `bun run test:e2e` — all Cucumber scenarios pass: `@adw-3` (`features/scan.feature`), `@adw-4` (`features/lint.feature`, `features/scan_accepts.feature`), and new `@adw-5` (`features/lint.feature` extensions and `features/scan_classify.feature`). No scenarios skipped or pending.
+- `bun run test:e2e` — all Cucumber scenarios pass: `@adw-3` (`features/scan.feature`), `@adw-4` (`features/lint.feature`, `features/scan_accepts.feature`), and new `@adw-5` (`features/lint_depaudit_yml.feature`, `features/scan_severity_threshold.feature`, `features/scan_yml_accepts.feature`). No scenarios skipped or pending.
 
 > Note: `bun run lint` (JS/TS code linter) is listed in `.adw/commands.md` but no tool is configured in `package.json`. Per the issue #3 and issue #4 plan notes, this command is deliberately excluded until a follow-up chore adds a JS/TS linter (Biome or oxlint). Validation here relies on `typecheck` + `test` + `build` + `test:e2e`.
 
