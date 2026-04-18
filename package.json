@@ -8,16 +8,22 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "chmod +x dist/cli.js",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "cucumber-js"
+    "test:e2e": "node --import tsx/esm node_modules/@cucumber/cucumber/bin/cucumber.js"
   },
   "keywords": ["security", "audit", "cve", "supply-chain", "osv", "socket"],
   "license": "MIT",
   "devDependencies": {
     "@cucumber/cucumber": "^12.8.1",
     "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "ignore": "^7.0.5"
   }
 }

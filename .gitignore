@@ -1,3 +1,8 @@
+dist/
+node_modules/
+.env
+.depaudit/
+
 # ADW: copied slash commands (do not commit)
 .claude/commands/adw_init.md
 .claude/commands/align_plan_scenarios.md
