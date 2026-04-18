@@ -70,7 +70,7 @@ Specifically:
 
 - **Unit tests** mirror the module boundaries: `orphanDetector.test.ts` (pure, fixture-driven), `configWriter.test.ts` (round-trips YAML and TOML fixtures, asserts mutation and comment preservation).
 
-- **BDD scenarios** (`features/scan_auto_prune.feature`, tag `@adw-13`) cover the three acceptance scenarios named in the issue: happy path prune, fail-open guard preserves stale accept, idempotency on re-run. Each uses a dedicated fixture under `fixtures/auto-prune-*/` alongside the existing pattern.
+- **BDD scenarios** (`features/scan_orphan_prune.feature`, tag `@adw-13`) cover the acceptance scenarios named in the issue plus negative-control and cross-source-isolation cases: happy-path prune (supply-chain, CVE, both), matching-accept preservation, selective prune in mixed state, Socket fail-open triggers (HTTP 503, HTTP 429, timeout), cross-source isolation (Socket down does not protect CVE accepts), OSV catastrophic-failure guard, and two idempotency cases. Each uses a dedicated fixture under `fixtures/prune-*/` alongside the existing pattern.
 
 ## Relevant Files
 
@@ -90,7 +90,7 @@ Use these files to implement the feature:
 - `src/modules/__tests__/configLoader.test.ts` — fixture-loading idiom used by the writer tests.
 - `src/modules/__tests__/findingMatcher.test.ts` — pure-function test idiom used by the orphan-detector tests.
 - `src/modules/__tests__/fixtures/` — existing fixture root for unit tests.
-- `features/scan_socket_supply_chain.feature` and `features/step_definitions/scan_socket_supply_chain_steps.ts` — precedent for `@adw-*` tagged scenarios that spin up a mock Socket server, write `.depaudit.yml` fixtures at runtime, and assert on stdout/stderr. The new `@adw-13` scenarios mirror the mock-Socket-server pattern for the fail-open guard.
+- `features/scan_socket_supply_chain.feature` and `features/step_definitions/scan_socket_supply_chain_steps.ts` — precedent for `@adw-*` tagged scenarios that spin up a mock Socket server, write `.depaudit.yml` fixtures at runtime, and assert on stdout/stderr. The new `@adw-13` scenarios (in `features/scan_orphan_prune.feature`) mirror the mock-Socket-server pattern for the fail-open guard.
 - `features/support/mockSocketServer.ts` — reusable mock server helper; the fail-open scenario configures it with `transientKind: "500"` or similar.
 - `features/support/world.ts` — already carries `socketMockUrl`, `socketToken`, `writtenFiles`. A new field `prunedFilesBeforeScan?: Record<string, string>` stores pre-scan file contents so teardown can restore fixtures across runs (since prune mutates fixtures in place).
 - `features/step_definitions/scan_steps.ts` — reuse `runDepaudit` and stdout/stderr assertions.
@@ -107,12 +107,21 @@ Use these files to implement the feature:
 - `src/modules/__tests__/configWriter.test.ts` — unit tests covering YAML round-trip, TOML round-trip, comment preservation, no-op behaviour, multi-orphan removal, and file-path absence.
 - `src/modules/__tests__/fixtures/auto-prune/*.yml` — fixture YAML files for writer round-trip tests.
 - `src/modules/__tests__/fixtures/auto-prune/*.toml` — fixture TOML files for writer round-trip tests.
-- `features/scan_auto_prune.feature` — new BDD feature file tagged `@adw-13`.
-- `features/step_definitions/scan_auto_prune_steps.ts` — step definitions for the above scenarios (pre-scan file snapshot, post-scan assertions on file contents).
-- `fixtures/auto-prune-happy/` — fixture: npm repo with a `.depaudit.yml` carrying a stale `supplyChainAccepts` entry for a `(package, version)` no longer in the tree.
-- `fixtures/auto-prune-fail-open/` — fixture: same stale accept, used by the Socket-unavailable scenario.
-- `fixtures/auto-prune-cve-happy/` — fixture: npm repo with an `osv-scanner.toml` carrying a stale `[[IgnoredVulns]]` entry for a CVE no longer surfaced by OSV.
-- `fixtures/auto-prune-idempotent/` — fixture: repo with a non-orphaned accept; second run must leave the file byte-identical.
+- `features/scan_orphan_prune.feature` — new BDD feature file tagged `@adw-13`.
+- `features/step_definitions/scan_orphan_prune_steps.ts` — step definitions for the above scenarios (pre-scan file snapshot, post-scan assertions on file contents, byte-identity checks).
+- `fixtures/prune-sca-orphan/` — npm repo with `.depaudit.yml` carrying a stale `supplyChainAccepts` entry (package `ghost-pkg@9.9.9`) not surfaced by the mock Socket server.
+- `fixtures/prune-cve-orphan/` — npm repo with `osv-scanner.toml` carrying a stale `[[IgnoredVulns]]` entry (id `CVE-ORPHAN-0001`) not surfaced by OSV.
+- `fixtures/prune-both-files/` — npm repo carrying both a stale supply-chain accept and a stale CVE accept; both must be pruned in a single scan.
+- `fixtures/prune-sca-matching/` — npm repo whose `.depaudit.yml` entry matches a Socket alert emitted by the mock server; entry must be preserved (negative control).
+- `fixtures/prune-cve-matching/` — npm repo whose `osv-scanner.toml` entry matches a CVE surfaced by OSV; entry must be preserved (negative control).
+- `fixtures/prune-sca-mixed/` — npm repo with two `supplyChainAccepts` entries (one matching the Socket alert, one orphan); only the orphan is removed.
+- `fixtures/prune-sca-socket-503/` — fail-open fixture: Socket mock returns HTTP 503; stale supply-chain accept must be preserved.
+- `fixtures/prune-sca-socket-timeout/` — fail-open fixture: Socket mock never responds within client timeout; stale supply-chain accept must be preserved.
+- `fixtures/prune-sca-socket-429/` — fail-open fixture: Socket mock returns HTTP 429; stale supply-chain accept must be preserved.
+- `fixtures/prune-cve-socket-down/` — cross-source-isolation fixture: Socket mock 503s but OSV succeeds; CVE orphan is pruned while supply-chain orphan is preserved.
+- `fixtures/prune-osv-fails/` — fixture whose OSV scan fails catastrophically; stale CVE accept must be preserved and scan exits non-zero.
+- `fixtures/prune-idempotent/` — repo whose `.depaudit.yml` has empty `commonAndFine` and `supplyChainAccepts`; re-running scan produces byte-identical file.
+- `fixtures/prune-idempotent-post/` — repo with a CVE orphan; after one prune, a second scan produces byte-identical `osv-scanner.toml`.
 
 ## Implementation Plan
 
@@ -238,35 +247,84 @@ Execute every step in order, top to bottom.
 
 ### Task 7 — Create BDD fixtures for auto-prune scenarios
 
-- `fixtures/auto-prune-happy/`:
+- `fixtures/prune-sca-orphan/`:
   - `package.json` declaring an innocuous npm dependency (e.g., `lodash@4.17.21`) with no known CVE.
-  - `.depaudit.yml` with version 1, default policy, one `supplyChainAccepts` entry for a `(package, version, findingId)` tuple that will not be surfaced by the mock Socket server (i.e., orphan).
+  - `.depaudit.yml` with version 1, default policy, one `supplyChainAccepts` entry for a `(package, version, findingId)` tuple for package `ghost-pkg@9.9.9` that will not be surfaced by the mock Socket server (i.e., orphan).
   - Any `package-lock.json` or equivalent needed to satisfy `extractPackagesFromManifests`.
-- `fixtures/auto-prune-fail-open/`:
-  - Copy of `auto-prune-happy` (can share a fixture if the scenarios use the same fixture path). Alternative: identical `.depaudit.yml`, and the fail-open scenario points the Socket mock at a 503-forever mode.
-- `fixtures/auto-prune-cve-happy/`:
-  - `package.json` with a dependency that no longer has a known CVE (or a clean-npm dependency).
-  - `osv-scanner.toml` with a single `[[IgnoredVulns]]` block for a CVE id that OSV will not emit (e.g., `GHSA-stale-xxxx` or a retired id).
+- `fixtures/prune-cve-orphan/`:
+  - `package.json` with a clean-npm dependency.
+  - `osv-scanner.toml` with a single `[[IgnoredVulns]]` block for id `CVE-ORPHAN-0001` that OSV will not emit.
   - `.depaudit.yml` minimal.
-- `fixtures/auto-prune-idempotent/`:
-  - Repo with a `.depaudit.yml` whose `supplyChainAccepts` entry DOES match a Socket-emitted finding (so it is not orphaned). After one pass, nothing is pruned; after a second pass, nothing is pruned. File byte-identical both times.
+- `fixtures/prune-both-files/`:
+  - `package.json` with a clean-npm dependency.
+  - `.depaudit.yml` with a stale `supplyChainAccepts` entry for `ghost-pkg@9.9.9`.
+  - `osv-scanner.toml` with a stale `[[IgnoredVulns]]` entry for `CVE-ORPHAN-0010`.
+- `fixtures/prune-sca-matching/`:
+  - `package.json` with a dependency that the mock Socket server will emit an `install-scripts` alert for.
+  - `.depaudit.yml` with a valid `supplyChainAccepts` entry whose `(package, version, findingId)` matches that alert.
+- `fixtures/prune-cve-matching/`:
+  - `package.json` pinning a dependency with a known OSV CVE.
+  - `osv-scanner.toml` with an `[[IgnoredVulns]]` entry for that CVE's id with a valid `ignoreUntil` and a `reason` of at least 20 characters.
+- `fixtures/prune-sca-mixed/`:
+  - `package.json` whose dependency the mock Socket server will emit an `install-scripts` alert for.
+  - `.depaudit.yml` with two `supplyChainAccepts` entries: one matching the Socket alert (must be preserved) and one for `ghost-pkg@9.9.9` (must be pruned).
+- `fixtures/prune-sca-socket-503/`, `fixtures/prune-sca-socket-timeout/`, `fixtures/prune-sca-socket-429/`:
+  - Each mirrors `fixtures/prune-sca-orphan/` but is consumed by a distinct Socket-failure scenario. Scenarios configure the mock Socket server to 503, never-respond, or 429 respectively; the stale supply-chain accept must be preserved in all three cases.
+- `fixtures/prune-cve-socket-down/`:
+  - Cross-source-isolation fixture. `package.json` with a clean-npm dependency.
+  - `.depaudit.yml` with a stale `supplyChainAccepts` entry for `ghost-pkg@9.9.9` (must be preserved because Socket is unavailable).
+  - `osv-scanner.toml` with a stale `[[IgnoredVulns]]` entry for `CVE-ORPHAN-0020` (must be pruned because OSV succeeded).
+- `fixtures/prune-osv-fails/`:
+  - Fixture whose manifest/config causes OSV to fail catastrophically (e.g., a malformed `osv-scanner.toml` that OSV itself rejects, or a trigger recognised by the test harness).
+  - `osv-scanner.toml` with a stale `[[IgnoredVulns]]` entry for `CVE-ORPHAN-0030`. Scan exits non-zero; no prune occurs.
+- `fixtures/prune-idempotent/`:
+  - Repo with `.depaudit.yml` at version 1, default policy, and empty `commonAndFine` and `supplyChainAccepts`. Two scans in succession produce byte-identical files.
+- `fixtures/prune-idempotent-post/`:
+  - Repo with a CVE orphan in `osv-scanner.toml` (`CVE-ORPHAN-0040`). First scan prunes it; the second scan on the cleaned state produces a byte-identical `osv-scanner.toml`.
 
 ### Task 8 — BDD feature + step definitions
 
-- `features/scan_auto_prune.feature`, `@adw-13`:
-  - Scenario: Stale supply-chain accept is pruned on a successful scan. Given the happy fixture, and a mock Socket API returning no alerts for any package, when `depaudit scan` runs, then exit 0, and `.depaudit.yml`'s `supplyChainAccepts` list is empty (or no longer contains the stale entry), and stderr mentions `auto-prune`.
-  - Scenario: Stale supply-chain accept is preserved when Socket is unavailable (fail-open guard). Same fixture, mock Socket returning HTTP 503 for every request, when `depaudit scan` runs, then stderr mentions `supply-chain unavailable`, and `.depaudit.yml` still contains the stale entry, and stderr does NOT mention `auto-prune`.
-  - Scenario: Stale CVE accept is pruned from `osv-scanner.toml` on a successful scan. Given the CVE-happy fixture, when `depaudit scan` runs, then exit 0, and `osv-scanner.toml` no longer contains the stale `[[IgnoredVulns]]` block, and stderr mentions `auto-prune`.
-  - Scenario: Re-running scan on the cleaned state is a no-op. Given the idempotent fixture, when `depaudit scan` runs twice in succession, then the `.depaudit.yml` file hash is identical before and after each run.
-- `features/step_definitions/scan_auto_prune_steps.ts`:
-  - `Before({ tags: "@adw-13" })` hook snapshots the fixture's `.depaudit.yml` and `osv-scanner.toml` to `world.originalFileContents: Record<string, string>`.
+- `features/scan_orphan_prune.feature`, `@adw-13`. Scenarios (all tagged `@regression` except where noted):
+  1. **Happy path (supply-chain)**: stale `supplyChainAccepts` entry removed from `.depaudit.yml` after a clean scan. Exit 0; stdout has no finding lines; `.depaudit.yml` no longer contains the orphan.
+  2. **Happy path (CVE)**: stale `[[IgnoredVulns]]` entry removed from `osv-scanner.toml` after a clean scan. Exit 0; stdout has no finding lines; `osv-scanner.toml` no longer contains the orphan.
+  3. **Both files**: single scan prunes a stale supply-chain accept and a stale CVE accept in the same repo. Exit 0; both files no longer contain their respective orphan.
+  4. **Negative control (supply-chain)**: matching `supplyChainAccepts` entry is NOT pruned when Socket emits the corresponding alert. File still contains the entry.
+  5. **Negative control (CVE)**: matching `[[IgnoredVulns]]` entry is NOT pruned when OSV emits the corresponding CVE. File still contains the entry.
+  6. **Selective prune**: `.depaudit.yml` with two `supplyChainAccepts` entries (one matching, one orphan) has only the orphan removed; the matching entry is preserved.
+  7. **Fail-open (Socket 503)**: stale supply-chain accept is PRESERVED when Socket returns 503. Exit 0; stderr mentions `supply-chain unavailable`; file still contains the entry.
+  8. **Fail-open (Socket timeout)**: same as (7) but mock Socket never responds within client timeout.
+  9. **Fail-open (Socket 429)**: same as (7) but mock Socket returns 429.
+  10. **Cross-source isolation**: when Socket is down but OSV succeeded, the CVE orphan is pruned while the supply-chain orphan is preserved. Exit 0; stderr mentions `supply-chain unavailable`.
+  11. **OSV catastrophic failure**: when `runOsvScanner` throws, scan exits non-zero and the stale `[[IgnoredVulns]]` entry is preserved (scan aborts before the prune step).
+  12. **Idempotency (already clean)**: `.depaudit.yml` with empty `commonAndFine` and `supplyChainAccepts`; two back-to-back scans produce byte-identical file.
+  13. **Idempotency (post-prune)** *(not tagged `@regression`)*: CVE orphan is pruned on the first scan; the second scan on the cleaned state produces a byte-identical `osv-scanner.toml`.
+- `features/step_definitions/scan_orphan_prune_steps.ts`:
+  - `Before({ tags: "@adw-13" })` hook snapshots the fixture's `.depaudit.yml` and `osv-scanner.toml` (if present) to `world.originalFileContents: Record<string, string>`.
   - `After({ tags: "@adw-13" })` restores the snapshotted files so scenarios do not bleed state. This is critical because prune mutates fixtures in place.
+  - New `Given` steps:
+    - `Given("the repository's .depaudit.yml has a \`supplyChainAccepts\` entry for package {string} at version {string} that matches no current finding", ...)`.
+    - `Given("the repository's .depaudit.yml has a valid \`supplyChainAccepts\` entry matching that (package, version, alertType) tuple", ...)`.
+    - `Given("the repository's .depaudit.yml has two \`supplyChainAccepts\` entries: one matching the Socket alert and one for package {string} at version {string} that matches no current finding", ...)`.
+    - `Given("the repository's osv-scanner.toml has an \`[[IgnoredVulns]]\` entry for id {string} that matches no current finding", ...)`.
+    - `Given("the repository's osv-scanner.toml has an \`[[IgnoredVulns]]\` entry for that CVE's id with a valid \`ignoreUntil\` and a \`reason\` of at least 20 characters", ...)`.
+    - `Given("the repository's .depaudit.yml has version 1, default policy, and empty \`commonAndFine\` and \`supplyChainAccepts\`", ...)`.
+    - `Given("a fixture Node repository at {string} whose OSV scan fails catastrophically", ...)` — configures the harness to trigger an OSV throw.
+    - `Given("a mock Socket API that never responds within the client timeout", ...)`.
+    - `Given("a mock Socket API that returns HTTP 429 for every request", ...)` (HTTP 503 already exists).
+  - New `When` steps:
+    - `When("I capture the content of .depaudit.yml in {string}", ...)` — reads and stores file bytes into `world.capturedContent`.
+    - `When("I capture the content of osv-scanner.toml in {string}", ...)` — same for TOML.
   - New `Then` steps:
-    - `Then<DepauditWorld>("the file {string} still contains a supplyChainAccepts entry for {string}", ...)`.
-    - `Then<DepauditWorld>("the file {string} no longer contains a supplyChainAccepts entry for {string}", ...)`.
-    - `Then<DepauditWorld>("the file {string} no longer contains an IgnoredVulns entry for {string}", ...)`.
-    - `Then<DepauditWorld>("the file {string} byte-equals its pre-scan snapshot", ...)`.
-  - Reuse existing `stderr mentions {string}` / `exit code` steps.
+    - `Then("the .depaudit.yml in {string} no longer contains a \`supplyChainAccepts\` entry for package {string}", ...)`.
+    - `Then("the .depaudit.yml in {string} still contains a \`supplyChainAccepts\` entry for package {string}", ...)`.
+    - `Then("the .depaudit.yml in {string} still contains the matching \`supplyChainAccepts\` entry", ...)`.
+    - `Then("the .depaudit.yml in {string} still contains a \`supplyChainAccepts\` entry matching the Socket alert", ...)`.
+    - `Then("the osv-scanner.toml in {string} no longer contains an \`[[IgnoredVulns]]\` entry for id {string}", ...)`.
+    - `Then("the osv-scanner.toml in {string} still contains an \`[[IgnoredVulns]]\` entry for id {string}", ...)`.
+    - `Then("the osv-scanner.toml in {string} still contains an \`[[IgnoredVulns]]\` entry for that CVE", ...)`.
+    - `Then("the .depaudit.yml content in {string} is byte-identical to the captured content", ...)`.
+    - `Then("the osv-scanner.toml content in {string} is byte-identical to the captured content", ...)`.
+  - Reuse existing `stderr mentions {string}`, `stdout contains no finding lines`, `exit code is 0`, and `exit code is non-zero` steps.
 
 ### Task 9 — Update documentation
 
@@ -318,7 +376,7 @@ Unit tests to build:
 - [ ] Re-running `depaudit scan` on the post-prune state produces identical `.depaudit.yml` and `osv-scanner.toml` contents (same hash); no further mutations.
 - [ ] `findOrphans` treats supply-chain and CVE accepts as source-discriminated: a `source: "osv"` finding does not protect a `supplyChainAccepts` entry and vice-versa.
 - [ ] Unit tests cover `orphanDetector` and `configWriter` with at least the scenarios in Tasks 3 and 5.
-- [ ] BDD scenarios in `features/scan_auto_prune.feature` cover the happy path, the fail-open guard, the CVE-accept happy path, and the idempotency case; all pass under `bun run test:e2e -- --tags "@adw-13"`.
+- [ ] BDD scenarios in `features/scan_orphan_prune.feature` cover happy path (supply-chain, CVE, both-files), matching-entry negative controls, selective prune, Socket fail-open guards (503, timeout, 429), cross-source isolation, OSV catastrophic-failure guard, and two idempotency cases; all pass under `bun run test:e2e -- --tags "@adw-13"`.
 - [ ] Regression: all previously passing BDD scenarios (`bun run test:e2e -- --tags "@regression"`) continue to pass unchanged.
 - [ ] `bun run lint`, `bun run typecheck`, `bun run build`, and `bun test` all pass with no new warnings or errors.
 
