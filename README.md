@@ -30,13 +30,23 @@ See [UBIQUITOUS_LANGUAGE.md](UBIQUITOUS_LANGUAGE.md) for the canonical definitio
 ```
 .adw/                    # ADW project config (commands, providers, scenarios)
 .claude/                 # Claude Code commands and skills
+app_docs/                # Feature documentation (per implemented slice)
+features/                # Cucumber e2e feature files and step definitions
+fixtures/                # Fixture repos for e2e tests
 specs/
   prd/
     depaudit.md          # Full product requirements document
+  patch/                 # Patch specs for incremental fixes
+src/
+  cli.ts                 # CLI entry point
+  commands/
+    scanCommand.ts       # ScanCommand composition root
+  modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, etc.)
+    __tests__/           # Unit tests with fixture data
+  types/                 # Shared domain types (Finding, Manifest)
 .env.sample              # Environment variable template
 UBIQUITOUS_LANGUAGE.md   # Domain glossary
+cucumber.js              # Cucumber e2e runner config
 package.json
 tsconfig.json
 ```
-
-> `src/` will be created as implementation slices land. See the Issues for the current slice in progress.
