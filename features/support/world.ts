@@ -1,9 +1,13 @@
-import { setWorldConstructor, World, type IWorldOptions } from "@cucumber/cucumber";
+import { setDefaultTimeout, setWorldConstructor, World, type IWorldOptions } from "@cucumber/cucumber";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const CLI_PATH = resolve(PROJECT_ROOT, "dist/cli.js");
+
+// `depaudit scan` shells out to `osv-scanner`, which routinely takes 2–4s per
+// invocation and can spike past Cucumber's 5s default under load.
+setDefaultTimeout(30_000);
 
 export interface RunResult {
   exitCode: number;
