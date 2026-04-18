@@ -123,8 +123,8 @@ Feature: depaudit lint — schema validation of .depaudit.yml
     Then the exit code is 0
 
   @adw-5 @regression
-  Scenario: Duplicate supplyChainAccepts entries on the same (package, version, alertType) produce a warning, not a fatal error
-    Given a fixture Node repository at "fixtures/yml-sca-duplicate" whose .depaudit.yml has two `supplyChainAccepts` entries with the same `(package, version, alertType)` tuple
+  Scenario: Duplicate supplyChainAccepts entries on the same (package, version, findingId) produce a warning, not a fatal error
+    Given a fixture Node repository at "fixtures/yml-sca-duplicate" whose .depaudit.yml has two `supplyChainAccepts` entries with the same `(package, version, findingId)` tuple
     When I run "depaudit lint fixtures/yml-sca-duplicate"
     Then the exit code is 0
     And stderr mentions "duplicate"
