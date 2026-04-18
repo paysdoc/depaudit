@@ -2,7 +2,7 @@
 features/
 
 ## Run Scenarios by Tag
-cucumber-js --tags "@{tag}"
+bun run test:e2e -- --tags "@{tag}"
 
 ## Run Regression Scenarios
-cucumber-js --tags "@regression"
+bun run test:e2e -- --tags "@regression"
