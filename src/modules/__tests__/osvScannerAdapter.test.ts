@@ -75,4 +75,32 @@ describe("runOsvScanner", () => {
       "/proj/packages/b",
     ]);
   });
+
+  it("maps OSV ecosystem strings to internal Ecosystem values across the full polyglot set", async () => {
+    const polyglotJson = await loadFixture("polyglot.json");
+    const execFile = vi.fn<ExecFileFn>().mockResolvedValue({ stdout: polyglotJson, stderr: "" });
+    const manifests: Manifest[] = [{ ecosystem: "npm", path: "/proj/package.json" }];
+
+    const findings = await runOsvScanner(manifests, execFile);
+
+    expect(findings).toHaveLength(7);
+
+    const byPkg = Object.fromEntries(findings.map((f) => [f.package, f.ecosystem]));
+    expect(byPkg["test-npm-pkg"]).toBe("npm");
+    expect(byPkg["test-pypi-pkg"]).toBe("pip");
+    expect(byPkg["example.com/gomod-pkg"]).toBe("gomod");
+    expect(byPkg["test-cargo-pkg"]).toBe("cargo");
+    expect(byPkg["com.example:maven-pkg"]).toBe("maven");
+    expect(byPkg["test-gem-pkg"]).toBe("gem");
+    expect(byPkg["example/composer-pkg"]).toBe("composer");
+  });
+
+  it("throws a clear error on an unknown OSV ecosystem string", async () => {
+    const unknownJson = await loadFixture("unknown-ecosystem.json");
+    const execFile = vi.fn<ExecFileFn>().mockResolvedValue({ stdout: unknownJson, stderr: "" });
+    const manifests: Manifest[] = [{ ecosystem: "npm", path: "/proj/package.json" }];
+
+    await expect(runOsvScanner(manifests, execFile)).rejects.toThrow(/unknown ecosystem/);
+    await expect(runOsvScanner(manifests, execFile)).rejects.toThrow(/NuGet/);
+  });
 });
