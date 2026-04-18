@@ -59,8 +59,8 @@ async function main(): Promise<void> {
 
   if (subcommand === "scan") {
     try {
-      const code = await runScanCommand(cmdPath ?? process.cwd());
-      process.exit(code);
+      const result = await runScanCommand(cmdPath ?? process.cwd());
+      process.exit(result.exitCode);
     } catch (err: unknown) {
       process.stderr.write(`error: ${(err as Error).message}\n`);
       process.exit(2);

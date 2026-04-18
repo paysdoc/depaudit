@@ -1,0 +1,12 @@
+[
+  {
+    "purl": "pkg:npm/foo@1.0.0",
+    "alerts": [
+      {
+        "type": "malware",
+        "severity": "critical",
+        "props": { "title": "Malware detected in package" }
+      }
+    ]
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "purl": "pkg:npm/foo@1.0.0",
+    "alerts": [
+      {
+        "type": "some-info-alert",
+        "severity": "info",
+        "props": { "title": "Informational only" }
+      }
+    ]
+  }
+]

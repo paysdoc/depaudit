@@ -1,0 +1,26 @@
+[
+  {
+    "purl": "pkg:pypi/requests@2.28.0",
+    "alerts": [{ "type": "malware", "severity": "critical", "props": { "title": "Malware" } }]
+  },
+  {
+    "purl": "pkg:golang/github.com%2Fuser%2Frepo@1.0.0",
+    "alerts": [{ "type": "typosquat", "severity": "high", "props": { "title": "Typosquat" } }]
+  },
+  {
+    "purl": "pkg:cargo/serde@1.0.0",
+    "alerts": [{ "type": "install-scripts", "severity": "medium", "props": { "title": "Install scripts" } }]
+  },
+  {
+    "purl": "pkg:maven/com.example%2Flib@1.0.0",
+    "alerts": [{ "type": "deprecated", "severity": "low", "props": { "title": "Deprecated" } }]
+  },
+  {
+    "purl": "pkg:gem/rails@7.0.0",
+    "alerts": [{ "type": "malware", "severity": "critical", "props": { "title": "Malware" } }]
+  },
+  {
+    "purl": "pkg:composer/vendor%2Fpackage@1.0.0",
+    "alerts": [{ "type": "typosquat", "severity": "high", "props": { "title": "Typosquat" } }]
+  }
+]
