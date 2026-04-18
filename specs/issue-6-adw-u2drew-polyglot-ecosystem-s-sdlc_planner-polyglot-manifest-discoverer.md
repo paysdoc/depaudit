@@ -134,21 +134,40 @@ Use these files to implement the feature:
 
 ### New Files
 
-- `fixtures/polyglot-monorepo/package.json` — Monorepo-root npm manifest pinning a known-vulnerable package (e.g. `lodash@4.17.20` for `CVE-2021-23337`, already proven in `fixtures/vulnerable-npm`).
-- `fixtures/polyglot-monorepo/services/api/go.mod` — Go manifest pinning a package with a known OSV CVE (e.g. an older `github.com/dgrijalva/jwt-go` version which has a well-known published CVE).
-- `fixtures/polyglot-monorepo/services/ml/requirements.txt` — Python pip manifest pinning a package with a known OSV CVE (e.g. an older `pyyaml` version pre-CVE-2020-1747 or `urllib3` pre-fix).
-- `fixtures/pip-requirements/requirements.txt` — Single-ecosystem pip fixture pinning a known CVE. Used by the "pip manifest is discovered and scanned" scenario.
-- `fixtures/pip-pyproject/pyproject.toml` — Single-ecosystem pip fixture using the modern manifest format.
-- `fixtures/gomod/go.mod` — Single-ecosystem Go fixture pinning a known CVE.
-- `fixtures/cargo/Cargo.toml` — Single-ecosystem Rust fixture.
-- `fixtures/maven/pom.xml` — Single-ecosystem Maven fixture.
-- `fixtures/gem/Gemfile` — Single-ecosystem Ruby fixture.
-- `fixtures/composer/composer.json` — Single-ecosystem PHP fixture.
-- `fixtures/with-build-dirs/package.json` — Clean root manifest.
-- `fixtures/with-build-dirs/vendor/legacy/Gemfile` — Nested manifest inside `vendor/` that must NOT be discovered.
-- `fixtures/with-build-dirs/target/debug/Cargo.toml` — Nested manifest inside `target/` that must NOT be discovered.
-- `fixtures/with-build-dirs/.venv/lib/requirements.txt` — Nested manifest inside `.venv/` that must NOT be discovered.
-- `fixtures/with-build-dirs/__pycache__/requirements.txt` — Nested manifest inside `__pycache__/` that must NOT be discovered.
+- `fixtures/polyglot-monorepo/package.json` — Monorepo-root npm manifest pinning a known-vulnerable package (e.g. `lodash@4.17.20` for `CVE-2021-23337`, already proven in `fixtures/vulnerable-npm`). Drives the "merged scan produces findings from each ecosystem" scenario.
+- `fixtures/polyglot-monorepo/go.mod` — Go manifest at the repo root pinning a package with a known OSV CVE (e.g. an older `github.com/dgrijalva/jwt-go` version which has a well-known published CVE). Flat (non-nested) layout per issue AC #5 ("fixture repo with `package.json` + `go.mod` + `requirements.txt`").
+- `fixtures/polyglot-monorepo/requirements.txt` — Python pip manifest at the repo root pinning a package with a known OSV CVE (e.g. an older `urllib3` pre-fix).
+- `fixtures/polyglot-nested/package.json` — Monorepo-root npm manifest with NO known CVEs. Separate fixture that exercises the "manifests at multiple depths are discovered" half of the issue statement, keeping `polyglot-monorepo` focused on the flat AC #5 shape.
+- `fixtures/polyglot-nested/services/api/go.mod` — Nested Go manifest pinning a package with a known OSV CVE.
+- `fixtures/polyglot-nested/services/worker/requirements.txt` — Nested pip manifest pinning a package with a known OSV CVE.
+- `fixtures/polyglot-partial-findings/package.json` — Root npm manifest with NO known CVEs.
+- `fixtures/polyglot-partial-findings/go.mod` — Root gomod manifest with NO known CVEs.
+- `fixtures/polyglot-partial-findings/requirements.txt` — Root pip manifest pinning a package with a known OSV CVE. Exercises the "only manifests with a CVE contribute finding lines" scenario.
+- `fixtures/polyglot-clean/package.json`, `fixtures/polyglot-clean/go.mod`, `fixtures/polyglot-clean/requirements.txt` — Three clean manifests for the "clean polyglot monorepo exits 0 with no finding lines" scenario.
+- `fixtures/polyglot-with-gitignore/go.mod` — Clean root gomod manifest.
+- `fixtures/polyglot-with-gitignore/.gitignore` — Contains the line `third_party/`.
+- `fixtures/polyglot-with-gitignore/third_party/legacy/go.mod` — Manifest pinning a known CVE inside a `.gitignore`d directory that must NOT be discovered.
+- `fixtures/vulnerable-pip/requirements.txt` — Single-ecosystem pip fixture pinning a known CVE. Named to match the existing `fixtures/vulnerable-npm` convention.
+- `fixtures/vulnerable-pyproject/pyproject.toml` — Single-ecosystem pip fixture using the modern manifest format.
+- `fixtures/vulnerable-gomod/go.mod` — Single-ecosystem Go fixture pinning a known CVE.
+- `fixtures/vulnerable-cargo/Cargo.toml` — Single-ecosystem Rust fixture.
+- `fixtures/vulnerable-maven/pom.xml` — Single-ecosystem Maven fixture.
+- `fixtures/vulnerable-gem/Gemfile` — Single-ecosystem Ruby fixture.
+- `fixtures/vulnerable-composer/composer.json` — Single-ecosystem PHP fixture.
+- `fixtures/clean-pip/requirements.txt` — Clean pip manifest with NO known CVEs. Drives the "clean pip repository exits 0" scenario.
+- `fixtures/clean-gomod/go.mod` — Clean Go manifest with NO known CVEs.
+- `fixtures/clean-cargo/Cargo.toml` — Clean Rust manifest with NO known CVEs.
+- `fixtures/pip-dual-manifest/pyproject.toml` — Clean pyproject manifest, same dir as a CVE-bearing `requirements.txt` to exercise the "both discovered" scenario.
+- `fixtures/pip-dual-manifest/requirements.txt` — CVE-bearing requirements manifest, same dir as `pyproject.toml`.
+- `fixtures/no-manifests/README.md` — A repository directory containing only non-manifest files (a README and perhaps a `.gitignore`). Exercises the "no supported manifests exits 0 cleanly" scenario.
+- `fixtures/with-vendor-dir/go.mod` — Clean root manifest.
+- `fixtures/with-vendor-dir/vendor/nested/go.mod` — CVE-bearing manifest inside `vendor/` that must NOT be discovered.
+- `fixtures/with-target-dir/Cargo.toml` — Clean root manifest.
+- `fixtures/with-target-dir/target/nested/Cargo.toml` — CVE-bearing manifest inside `target/` that must NOT be discovered.
+- `fixtures/with-venv-dir/requirements.txt` — Clean root manifest.
+- `fixtures/with-venv-dir/.venv/nested/requirements.txt` — CVE-bearing manifest inside `.venv/` that must NOT be discovered.
+- `fixtures/with-pycache-dir/requirements.txt` — Clean root manifest.
+- `fixtures/with-pycache-dir/__pycache__/nested/requirements.txt` — CVE-bearing manifest inside `__pycache__/` that must NOT be discovered.
 - `src/modules/__tests__/fixtures/polyglot-repo/package.json` — Root npm manifest for unit-test discovery.
 - `src/modules/__tests__/fixtures/polyglot-repo/requirements.txt` — pip manifest (same dir as `package.json` to test multi-manifest-per-dir).
 - `src/modules/__tests__/fixtures/polyglot-repo/services/api/go.mod` — Nested gomod manifest.
@@ -290,25 +309,37 @@ Execute every step in order, top to bottom.
 
 ### 7. Build polyglot BDD fixtures
 
-- Create `fixtures/polyglot-monorepo/` with:
+- Create `fixtures/polyglot-monorepo/` with all three manifests at the **root** (flat layout per issue AC #5):
   - Root `package.json` pinning a known-vulnerable npm package (reuse the `lodash@4.17.20` pattern from `fixtures/vulnerable-npm`).
-  - `services/api/go.mod` pinning a known-vulnerable Go module. Use a well-documented, long-standing CVE-bearing version (e.g. `github.com/dgrijalva/jwt-go v3.2.0+incompatible` for `CVE-2020-26160`) so OSV-Scanner reliably flags it across runs.
-  - `services/ml/requirements.txt` pinning a known-vulnerable Python package (e.g. `urllib3==1.26.4` or similar; pick any line with a published OSV entry).
-- Create `fixtures/pip-requirements/requirements.txt`, `fixtures/pip-pyproject/pyproject.toml`, `fixtures/gomod/go.mod`, `fixtures/cargo/Cargo.toml`, `fixtures/maven/pom.xml`, `fixtures/gem/Gemfile`, `fixtures/composer/composer.json` — each pinning a known-vulnerable package for its ecosystem. Use minimal, valid manifest content for each (each ecosystem's OSV-Scanner support requires only a parseable manifest).
-- Create `fixtures/with-build-dirs/` with clean root `package.json` and polluted `vendor/`, `target/`, `.venv/`, `__pycache__/` subtrees each containing a CVE-bearing manifest.
+  - Root `go.mod` pinning a known-vulnerable Go module. Use a well-documented, long-standing CVE-bearing version (e.g. `github.com/dgrijalva/jwt-go v3.2.0+incompatible` for `CVE-2020-26160`) so OSV-Scanner reliably flags it across runs.
+  - Root `requirements.txt` pinning a known-vulnerable Python package (e.g. `urllib3==1.26.4` or similar; pick any line with a published OSV entry).
+- Create `fixtures/polyglot-nested/` with a clean root `package.json`, a CVE-bearing `services/api/go.mod`, and a CVE-bearing `services/worker/requirements.txt` — exercises the "manifests at multiple depths" half of the issue statement.
+- Create `fixtures/polyglot-partial-findings/` with a clean root `package.json` and `go.mod`, plus a CVE-bearing `requirements.txt` at the root — exercises the "only manifests with a CVE contribute finding lines" scenario.
+- Create `fixtures/polyglot-clean/` with clean `package.json`, `go.mod`, and `requirements.txt` at the root — exercises the "clean polyglot monorepo exits 0" scenario.
+- Create `fixtures/polyglot-with-gitignore/` with a clean root `go.mod`, a `.gitignore` containing `third_party/`, and a CVE-bearing `third_party/legacy/go.mod` — exercises `.gitignore` honouring in a polyglot repository.
+- Create single-ecosystem CVE-bearing fixtures (naming follows the existing `fixtures/vulnerable-npm` convention): `fixtures/vulnerable-pip/requirements.txt`, `fixtures/vulnerable-pyproject/pyproject.toml`, `fixtures/vulnerable-gomod/go.mod`, `fixtures/vulnerable-cargo/Cargo.toml`, `fixtures/vulnerable-maven/pom.xml`, `fixtures/vulnerable-gem/Gemfile`, `fixtures/vulnerable-composer/composer.json` — each pinning a known-vulnerable package for its ecosystem. Use minimal, valid manifest content for each (each ecosystem's OSV-Scanner support requires only a parseable manifest).
+- Create single-ecosystem clean fixtures: `fixtures/clean-pip/requirements.txt`, `fixtures/clean-gomod/go.mod`, `fixtures/clean-cargo/Cargo.toml` — each pinning a package with no known CVE.
+- Create `fixtures/pip-dual-manifest/` with a clean `pyproject.toml` and a CVE-bearing `requirements.txt` in the same directory — exercises the "both discovered in the same dir" scenario.
+- Create `fixtures/no-manifests/` containing only non-manifest files (e.g. a README) — exercises the "no supported manifests exits 0 cleanly" scenario.
+- Create four separate build-directory fixtures, each scoped to a single build dir per the issue's AC #2 enumeration (`vendor/`, `target/`, `.venv/`, `__pycache__/`):
+  - `fixtures/with-vendor-dir/go.mod` (clean) + `fixtures/with-vendor-dir/vendor/nested/go.mod` (CVE-bearing, must NOT be discovered).
+  - `fixtures/with-target-dir/Cargo.toml` (clean) + `fixtures/with-target-dir/target/nested/Cargo.toml` (CVE-bearing, must NOT be discovered).
+  - `fixtures/with-venv-dir/requirements.txt` (clean) + `fixtures/with-venv-dir/.venv/nested/requirements.txt` (CVE-bearing, must NOT be discovered).
+  - `fixtures/with-pycache-dir/requirements.txt` (clean) + `fixtures/with-pycache-dir/__pycache__/nested/requirements.txt` (CVE-bearing, must NOT be discovered).
 
 ### 8. Add polyglot BDD feature file
 
-- Create `features/scan_polyglot.feature` tagged `@adw-6`. Model after `features/scan.feature`'s `@adw-3` style. Scenarios:
-  - **Polyglot monorepo — merged scan produces findings from each ecosystem.** Given `fixtures/polyglot-monorepo` with `package.json` + `go.mod` + `requirements.txt` each pinning a known CVE, when `depaudit scan fixtures/polyglot-monorepo` runs, assert exit non-zero and stdout contains finding lines whose ecosystems (derived from matching package names) span npm, gomod, and pip.
-  - **Single pip requirements.txt manifest — discovered and scanned.** Given `fixtures/pip-requirements`, assert non-zero exit and at least one finding line whose package matches a pip dep.
-  - **Single pip pyproject.toml manifest — discovered and scanned.** Analogous.
-  - **Single go.mod manifest.**
-  - **Single Cargo.toml manifest.**
-  - **Single pom.xml manifest.**
-  - **Single Gemfile manifest.**
-  - **Single composer.json manifest.**
-  - **Build-directory exclusion — vendor/, target/, .venv/, __pycache__/ each hard-skipped.** Four scenarios (or one with a table) against `fixtures/with-build-dirs`, each asserting exit 0 and zero finding lines even though each polluted subtree contains a CVE-bearing manifest.
+- Create `features/scan_polyglot.feature` tagged `@adw-6`. Model after `features/scan.feature`'s `@adw-3` style. Scenarios (every scenario is additionally tagged `@regression` unless specifically marked otherwise):
+  - **Scenario Outline — Discover and scan a single manifest of each non-npm ecosystem with a known CVE.** One row per ecosystem driven by a fixture table: `fixtures/vulnerable-pip` (`requirements.txt`), `fixtures/vulnerable-pyproject` (`pyproject.toml`), `fixtures/vulnerable-gomod` (`go.mod`), `fixtures/vulnerable-cargo` (`Cargo.toml`), `fixtures/vulnerable-maven` (`pom.xml`), `fixtures/vulnerable-gem` (`Gemfile`), `fixtures/vulnerable-composer` (`composer.json`). For each row, assert exit non-zero and at least one finding line with package/version/finding-ID/severity.
+  - **Scenario Outline — Clean repository of each ecosystem exits 0 with no finding lines.** Rows: `fixtures/clean-pip`, `fixtures/clean-gomod`, `fixtures/clean-cargo`.
+  - **Scenario Outline — ManifestDiscoverer skips build directories.** One fixture per build dir, each containing a clean root manifest and a CVE-bearing nested manifest under `<build_dir>/nested/`. Rows: `fixtures/with-vendor-dir` (vendor), `fixtures/with-target-dir` (target), `fixtures/with-venv-dir` (.venv), `fixtures/with-pycache-dir` (__pycache__). Each row asserts exit 0 and zero finding lines.
+  - **Scenario — ManifestDiscoverer still respects `.gitignore` in a polyglot repository.** `fixtures/polyglot-with-gitignore` with a clean root `go.mod`, a `.gitignore` entry for `third_party/`, and a CVE-bearing `third_party/legacy/go.mod`. Asserts exit 0 and zero finding lines.
+  - **Scenario — Polyglot monorepo: findings from npm, gomod, and pip merged into one scan result.** `fixtures/polyglot-monorepo` with `package.json`, `go.mod`, `requirements.txt` all at the root, each pinning a known CVE. Asserts exit non-zero and at least one finding line per manifest whose package name is declared in that manifest. (This is the AC #5 integration test.)
+  - **Scenario — Polyglot monorepo: only manifests with a CVE contribute finding lines.** `fixtures/polyglot-partial-findings` — clean `package.json` and `go.mod`, CVE-bearing `requirements.txt`. Asserts finding lines only for packages declared in `requirements.txt`.
+  - **Scenario — Polyglot monorepo with nested manifests at multiple depths is fully scanned.** `fixtures/polyglot-nested` — clean root `package.json`, CVE-bearing `services/api/go.mod`, CVE-bearing `services/worker/requirements.txt`. Asserts finding lines for the two nested CVE manifests.
+  - **Scenario — Clean polyglot monorepo exits 0 with no finding lines.** `fixtures/polyglot-clean` with clean `package.json`, `go.mod`, `requirements.txt`. (No `@regression` tag — acceptance-only smoke.)
+  - **Scenario — `pyproject.toml` and `requirements.txt` in the same directory are both discovered.** `fixtures/pip-dual-manifest` with a clean `pyproject.toml` and a CVE-bearing `requirements.txt` side-by-side. Asserts exit non-zero and a finding line whose package is declared in `requirements.txt`. (No `@regression` tag.)
+  - **Scenario — Repository with no supported manifests exits 0 cleanly.** `fixtures/no-manifests` containing only non-manifest files. Asserts exit 0 and zero finding lines. (No `@regression` tag.)
 
 ### 9. Add polyglot step definitions
 
@@ -394,9 +425,9 @@ Per `.adw/commands.md`:
 - `bun run test:e2e -- --tags "@adw-6"` — run only the new polyglot scenarios. Expect all scenarios to pass, including the polyglot monorepo merged-scan scenario and the build-directory exclusion scenarios.
 - `bun run test:e2e -- --tags "@regression"` — run the full regression suite across all prior slices. Expect zero regressions.
 - Manual smoke test:
-  - `node dist/cli.js scan fixtures/polyglot-monorepo/` — expect non-zero exit and stdout lines for packages from the npm, go.mod, and requirements.txt manifests.
-  - `node dist/cli.js scan fixtures/with-build-dirs/` — expect exit 0 and empty stdout despite the CVE-bearing manifests nested inside `vendor/`, `target/`, `.venv/`, `__pycache__/`.
-  - `node dist/cli.js scan fixtures/gomod/` — expect non-zero exit and at least one finding line whose package name matches the Go module declared in the fixture.
+  - `node dist/cli.js scan fixtures/polyglot-monorepo/` — expect non-zero exit and stdout lines for packages from the `package.json`, `go.mod`, and `requirements.txt` manifests (all three at the fixture root).
+  - `node dist/cli.js scan fixtures/with-vendor-dir/` — expect exit 0 and empty stdout despite the CVE-bearing manifest nested inside `vendor/nested/`. Repeat for `fixtures/with-target-dir/`, `fixtures/with-venv-dir/`, and `fixtures/with-pycache-dir/`.
+  - `node dist/cli.js scan fixtures/vulnerable-gomod/` — expect non-zero exit and at least one finding line whose package name matches the Go module declared in the fixture.
 
 ## Notes
 
