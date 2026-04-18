@@ -1,0 +1,14 @@
+[[IgnoredVulns]]
+id = "CVE-2021-23337"
+ignoreUntil = 2027-01-01
+reason = "upstream fix pending in 4.17.21"
+
+[[IgnoredVulns]]
+id = "CVE-ORPHAN-0001"
+ignoreUntil = 2027-01-01
+reason = "This is the orphan to be removed"
+
+[[IgnoredVulns]]
+id = "GHSA-abc-def-0001"
+ignoreUntil = 2027-01-01
+reason = "another valid entry to preserve"

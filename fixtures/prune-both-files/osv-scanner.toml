@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "CVE-ORPHAN-0010"
+ignoreUntil = 2026-06-17
+reason = "Stale CVE accept for a vulnerability no longer present"

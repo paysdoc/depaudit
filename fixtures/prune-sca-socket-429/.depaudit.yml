@@ -1,0 +1,13 @@
+version: 1
+policy:
+  severityThreshold: medium
+  ecosystems: auto
+  maxAcceptDays: 90
+  maxCommonAndFineDays: 365
+commonAndFine: []
+supplyChainAccepts:
+  - package: "ghost-pkg"
+    version: "9.9.9"
+    findingId: "install-scripts"
+    expires: "2026-06-17"
+    reason: "Stale accept preserved due to Socket rate limiting"

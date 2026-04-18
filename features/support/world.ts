@@ -34,6 +34,12 @@ export class DepauditWorld extends World {
   socketAlertPackage?: string;
   /** Package version that the mock Socket server will flag */
   socketAlertVersion?: string;
+  /** Original file contents for @adw-13 restore-after-test — keyed by absolute file path */
+  originalFileContents?: Map<string, string>;
+  /** Captured file content for idempotency checks in @adw-13 scenarios */
+  capturedFileContent?: string;
+  /** Path to a temp directory containing a fake osv-scanner binary (for OSV failure scenarios) */
+  fakeOsvBinDir?: string;
 
   constructor(options: IWorldOptions) {
     super(options);
