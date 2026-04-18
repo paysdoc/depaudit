@@ -34,7 +34,7 @@ Create `src/` following the deep-module structure documented in `.adw/project.md
 
 `ManifestDiscoverer` walks the target directory, honors `.gitignore` via the `ignore` npm package, hard-skips `node_modules/` and `.git/` as a safety rail, and returns only `package.json` manifests (the issue scopes this slice to npm — other ecosystems arrive in #4). `OsvScannerAdapter` derives the unique parent directories of the discovered manifests and passes them to `osv-scanner scan source --format=json <dirs>`, which handles lockfile discovery internally (non-recursive by default, so `node_modules/` is not re-entered). The adapter treats OSV-Scanner's exit code 1 (vulnerabilities found) as a success path, parses the JSON, and maps each reported vulnerability to a `Finding`. Any other non-zero exit is propagated as an error.
 
-`Finding` carries the strict `(package, version, findingId)` identity the PRD demands, plus ecosystem, severity, source (`osv`), summary, and the originating manifest path. `stdoutReporter` formats each as `<ecosystem> <package>@<version> <findingId> <severity>`. `ScanCommand` returns an exit code of 0 for an empty findings list and 1 otherwise. Severity filtering is deferred to a later slice.
+`Finding` carries the strict `(package, version, findingId)` identity the PRD demands, plus ecosystem, severity, source (`osv`), summary, and the originating manifest path. `stdoutReporter` formats each as `<package> <version> <findingId> <severity>`, per the issue's acceptance criterion "one line per finding (package, version, finding-id, severity)". `ScanCommand` returns an exit code of 0 for an empty findings list and 1 otherwise. Severity filtering is deferred to a later slice.
 
 Unit tests cover the two deep modules, per the issue's acceptance criteria: `ManifestDiscoverer` against committed fixture directories covering gitignore, nested manifests, and `node_modules/` skipping; `OsvScannerAdapter` against mocked `execFile` invocations covering happy path, findings-present (exit 1 with stdout), and real-error (exit >1).
 
@@ -180,7 +180,7 @@ Execute every step in order, top to bottom.
 ### Implement `stdoutReporter`
 
 - Create `src/modules/stdoutReporter.ts` exporting `function printFindings(findings: Finding[], stream: NodeJS.WritableStream = process.stdout): void`.
-- Each line format: `${finding.ecosystem} ${finding.package}@${finding.version} ${finding.findingId} ${finding.severity}` followed by `\n`.
+- Each line format: `${finding.package} ${finding.version} ${finding.findingId} ${finding.severity}` followed by `\n` (per the issue's stdout acceptance criterion: `package, version, finding-id, severity`, space-separated, four fields, no ecosystem prefix, no `@` between package and version).
 - If `findings.length === 0`, write nothing (the exit code carries the signal; extra text would pollute downstream consumers).
 
 ### Implement `ScanCommand`
@@ -217,7 +217,7 @@ Execute every step in order, top to bottom.
 - From the worktree root, run `bun link` so `depaudit` is globally resolvable.
 - Prepare a throwaway Node fixture outside the repo: `/tmp/depaudit-smoke/` with a known-vulnerable `package-lock.json` (reuse the `lodash@4.17.20` fixture pattern used during plan research).
 - Run `depaudit scan /tmp/depaudit-smoke/` and confirm:
-  - Stdout contains one line per finding in the `<ecosystem> <package>@<version> <findingId> <severity>` format.
+  - Stdout contains one line per finding in the `<package> <version> <findingId> <severity>` format.
   - Exit code is `1` (non-zero due to findings).
 - Run `depaudit scan /tmp/empty-node-repo/` against a fixture with a lockfile that has no vulnerabilities; confirm exit code `0` and no stdout output.
 - Run `bun unlink` to clean up.
@@ -253,7 +253,7 @@ Execute every step in order, top to bottom.
 - After `bun link` (or `npm install -g .`), typing `depaudit --help` prints usage and exits 0.
 - `depaudit --version` prints `0.1.0` (the version in `package.json`) and exits 0.
 - `depaudit scan /path/to/node-repo` exits 0 and writes nothing to stdout when the repo has no OSV findings.
-- `depaudit scan /path/to/node-repo` exits 1 and writes one line per finding (format `<ecosystem> <package>@<version> <findingId> <severity>`) when the repo has findings.
+- `depaudit scan /path/to/node-repo` exits 1 and writes one line per finding (format `<package> <version> <findingId> <severity>`) when the repo has findings.
 - `ManifestDiscoverer` returns a `Manifest[]` that includes every `package.json` not ignored by `.gitignore` and not under `node_modules/` or `.git/`.
 - `OsvScannerAdapter` returns a `Finding[]` normalized from OSV-Scanner's JSON output, correctly handling the exit-code-1-on-findings convention.
 - Vitest runs via `bun test` with zero failing tests; `ManifestDiscoverer` and `OsvScannerAdapter` suites both present.

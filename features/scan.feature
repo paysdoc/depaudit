@@ -66,10 +66,12 @@ Feature: depaudit scan — CLI skeleton and OSV-Scanner CVE scan (npm, stdout)
     And stdout contains a finding line whose package name matches a dependency declared in "packages/a/package.json"
 
   @adw-3 @regression
-  Scenario: Missing path argument fails with a helpful message
+  Scenario: Omitting the path argument scans the current working directory
+    Given a fixture Node repository at "fixtures/clean-npm" whose manifests have no known CVEs
+    And the current working directory is "fixtures/clean-npm"
     When I run "depaudit scan" with no path argument
-    Then the exit code is non-zero
-    And stderr explains that a path argument is required
+    Then the exit code is 0
+    And stdout contains no finding lines
 
   @adw-3
   Scenario: Non-existent path fails with a clear error
