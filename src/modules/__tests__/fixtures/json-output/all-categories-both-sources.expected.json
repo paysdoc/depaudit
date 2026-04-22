@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "sourceAvailability": {
+    "osv": true,
+    "socket": true
+  },
+  "findings": [
+    {
+      "package": "pkg-a",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "CVE-001",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "accepted",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-b",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "CVE-002",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "expired-accept",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-c",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "CVE-003",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "new",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-d",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "CVE-004",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "whitelisted",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-e",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "install-scripts",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "accepted",
+      "source": "socket",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-f",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "deprecated",
+      "severity": "MEDIUM",
+      "summary": "",
+      "classification": "expired-accept",
+      "source": "socket",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-g",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "bin-script",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "new",
+      "source": "socket",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "pkg-h",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "native-code",
+      "severity": "MEDIUM",
+      "summary": "",
+      "classification": "whitelisted",
+      "source": "socket",
+      "upgradeSuggestion": null
+    }
+  ]
+}

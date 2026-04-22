@@ -11,6 +11,7 @@ import { classifyFindings } from "../modules/findingMatcher.js";
 import { fetchSocketFindings, SocketAuthError, type PackageRef } from "../modules/socketApiClient.js";
 import { findOrphans } from "../modules/orphanDetector.js";
 import { pruneDepauditYml, pruneOsvScannerToml } from "../modules/configWriter.js";
+import { writeFindingsJson } from "../modules/jsonReporter.js";
 import type { ScanResult } from "../types/scanResult.js";
 import type { Manifest } from "../types/manifest.js";
 import type { Ecosystem } from "../types/finding.js";
@@ -154,8 +155,7 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
   }
 
   if (!osvAvailable) {
-    process.stderr.write("osv: CVE scan failed catastrophically — scan aborted\n");
-    return { findings: [], socketAvailable: true, osvAvailable: false, exitCode: 1 };
+    process.stderr.write("osv: CVE scan failed catastrophically — continuing on available data\n");
   }
 
   let socketResult: { findings: import("../types/finding.js").Finding[]; available: boolean };
@@ -173,7 +173,10 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
     process.stderr.write("socket: supply-chain unavailable — scan continuing on CVE findings only\n");
   }
 
-  const allFindings = [...osvFindings, ...socketResult.findings];
+  // Use osvRawFindings (unfiltered by osv-scanner) so FindingMatcher can produce
+  // the full four-way classification including "accepted" entries for findings.json.
+  // Stdout and exit code are only affected by "new" and "expired-accept" categories.
+  const allFindings = [...osvRawFindings, ...socketResult.findings];
   const classified = classifyFindings(allFindings, depauditConfig, osvConfig);
 
   const newFindings = classified.filter((c) => c.category === "new").map((c) => c.finding);
@@ -208,6 +211,9 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
     }
   }
 
-  const exitCode = newFindings.length === 0 && expiredAccepts.length === 0 ? 0 : 1;
+  const exitCode = newFindings.length === 0 && expiredAccepts.length === 0 && osvAvailable ? 0 : 1;
+
+  await writeFindingsJson(scanPath, { findings: classified, socketAvailable: socketResult.available, osvAvailable, exitCode });
+
   return { findings: classified, socketAvailable: socketResult.available, osvAvailable, exitCode };
 }

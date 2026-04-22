@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "sourceAvailability": {
+    "osv": true,
+    "socket": true
+  },
+  "findings": [
+    {
+      "package": "alpha",
+      "version": "1.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "GHSA-aaaa-aaaa-aaaa",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "new",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "beta",
+      "version": "2.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "GHSA-bbbb-bbbb-bbbb",
+      "severity": "MEDIUM",
+      "summary": "",
+      "classification": "new",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "gamma",
+      "version": "3.0.0",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "GHSA-cccc-cccc-cccc",
+      "severity": "LOW",
+      "summary": "",
+      "classification": "new",
+      "source": "osv",
+      "upgradeSuggestion": null
+    }
+  ]
+}

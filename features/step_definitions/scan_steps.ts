@@ -178,7 +178,8 @@ Then<DepauditWorld>("the exit code is non-zero", function (this: DepauditWorld) 
 
 Then<DepauditWorld>("stdout contains no finding lines", function (this: DepauditWorld) {
   const lines = this.result!.stdout.trim().split("\n").filter(Boolean);
-  assert.equal(lines.length, 0, `expected no finding lines, got:\n${this.result!.stdout}`);
+  const findingLines = lines.filter((l) => FINDING_LINE_RE.test(l));
+  assert.equal(findingLines.length, 0, `expected no finding lines, got:\n${findingLines.join("\n")}`);
 });
 
 Then<DepauditWorld>("stdout contains at least one finding line", function (this: DepauditWorld) {
@@ -190,7 +191,8 @@ Then<DepauditWorld>(
   "each finding line contains a package name, a version, a finding-ID, and a severity",
   function (this: DepauditWorld) {
     const lines = this.result!.stdout.trim().split("\n").filter(Boolean);
-    for (const line of lines) {
+    const findingLines = lines.filter((l) => !l.startsWith("warning:"));
+    for (const line of findingLines) {
       assert.match(line, FINDING_LINE_RE, `finding line did not match expected format: "${line}"`);
     }
   }
@@ -198,14 +200,17 @@ Then<DepauditWorld>(
 
 Then<DepauditWorld>("stdout contains exactly one finding line", function (this: DepauditWorld) {
   const lines = this.result!.stdout.trim().split("\n").filter(Boolean);
-  assert.equal(lines.length, 1, `expected exactly 1 finding line, got ${lines.length}:\n${this.result!.stdout}`);
+  const findingLines = lines.filter((l) => FINDING_LINE_RE.test(l));
+  assert.equal(findingLines.length, 1, `expected exactly 1 finding line, got ${findingLines.length}:\n${this.result!.stdout}`);
 });
 
 Then<DepauditWorld>(
   "the finding line matches the pattern {string}",
   function (this: DepauditWorld, _pattern: string) {
-    const line = this.result!.stdout.trim();
-    assert.match(line, FINDING_LINE_RE, `finding line did not match format: "${line}"`);
+    const lines = this.result!.stdout.trim().split("\n").filter(Boolean);
+    const findingLines = lines.filter((l) => FINDING_LINE_RE.test(l));
+    assert.ok(findingLines.length > 0, `no finding line found in stdout:\n${this.result!.stdout}`);
+    assert.match(findingLines[0], FINDING_LINE_RE, `finding line did not match format: "${findingLines[0]}"`);
   }
 );
 

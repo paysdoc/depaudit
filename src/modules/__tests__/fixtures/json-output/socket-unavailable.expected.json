@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "sourceAvailability": {
+    "osv": true,
+    "socket": false
+  },
+  "findings": [
+    {
+      "package": "semver",
+      "version": "5.7.1",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "GHSA-c2qf-rxjj-qqgw",
+      "severity": "MEDIUM",
+      "summary": "",
+      "classification": "new",
+      "source": "osv",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "lodash",
+      "version": "4.17.20",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "GHSA-jf85-cpcp-j695",
+      "severity": "HIGH",
+      "summary": "",
+      "classification": "new",
+      "source": "osv",
+      "upgradeSuggestion": null
+    }
+  ]
+}
