@@ -2,7 +2,7 @@
 
 **ADW ID:** 2rdowb-jsonreporter-depaudi
 **Date:** 2026-04-22
-**Issue:** #8
+**Specification:** specs/issue-8-adw-2rdowb-jsonreporter-depaudi-sdlc_planner-json-reporter-findings-output.md
 
 ## Overview
 
@@ -85,6 +85,14 @@ osv: CVE scan failed catastrophically — continuing on available data
   ]
 }
 ```
+
+## Configuration
+
+No new configuration options. `JsonReporter` is invoked automatically on every `depaudit scan` run that reaches classification — no flags or env vars required.
+
+- **Output path:** always `.depaudit/findings.json` relative to the scan root (non-configurable by design; deterministic path is the contract for `/depaudit-triage`).
+- **Gitignore warning:** emitted to stdout (not stderr) when `.depaudit/findings.json` is not covered by `<scanRoot>/.gitignore`. Run `depaudit setup` or manually add `.depaudit/` to your `.gitignore` to suppress it.
+- **Pre-classification aborts** (lint error, config parse error, `SocketAuthError`): reporter is not invoked; any prior `.depaudit/findings.json` is left untouched.
 
 ## Testing
 
