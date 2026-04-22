@@ -120,6 +120,15 @@ export async function runDepaudit(world: DepauditWorld, args: string[]): Promise
     const existingPath = env["PATH"] ?? "";
     env["PATH"] = `${world.fakeOsvBinDir}:${existingPath}`;
   }
+  // Prepend mock git/gh binary dirs to PATH for @adw-12 setup scenarios
+  if (world.gitMock !== undefined) {
+    const existingPath = env["PATH"] ?? "";
+    env["PATH"] = `${world.gitMock.binDir}:${existingPath}`;
+  }
+  if (world.ghMock !== undefined) {
+    const existingPath = env["PATH"] ?? "";
+    env["PATH"] = `${world.ghMock.binDir}:${existingPath}`;
+  }
 
   // For scenarios that don't configure socket (e.g. regression tests), if no
   // SOCKET_API_TOKEN is available in env, spin up a no-op mock so the CLI

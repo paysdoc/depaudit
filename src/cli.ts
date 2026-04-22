@@ -11,6 +11,7 @@ const USAGE = `
 Usage: depaudit <command> [options]
 
 Commands:
+  setup [path]           Bootstrap a target repo: scaffold config, baseline findings, and commit (default path: cwd)
   scan [path]            Scan a Node repository for CVE findings (default path: cwd)
   lint [path]            Lint osv-scanner.toml (default path: cwd)
   post-pr-comment        Post or update a depaudit gate comment on a PR
@@ -127,6 +128,17 @@ async function main(): Promise<void> {
         repo: values.repo,
         prNumber,
       });
+      process.exit(code);
+    } catch (err: unknown) {
+      process.stderr.write(`error: ${(err as Error).message}\n`);
+      process.exit(2);
+    }
+  } else if (subcommand === "setup") {
+    try {
+      const { runDepauditSetupCommand } = await import(
+        "./commands/depauditSetupCommand.js"
+      );
+      const code = await runDepauditSetupCommand({ cwd: cmdPath ?? process.cwd() });
       process.exit(code);
     } catch (err: unknown) {
       process.stderr.write(`error: ${(err as Error).message}\n`);

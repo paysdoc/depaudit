@@ -44,6 +44,7 @@ src/
     scanCommand.ts       # ScanCommand composition root
     lintCommand.ts       # LintCommand composition root
     postPrCommentCommand.ts  # PostPrCommentCommand composition root
+    __tests__/           # Unit tests for commands
   modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, ConfigLoader, Linter,
                          #   FindingMatcher, StateTracker, GhPrCommentClient, JsonReporter,
                          #   MarkdownReporter, SocketApiClient, OrphanDetector, ConfigWriter, etc.)

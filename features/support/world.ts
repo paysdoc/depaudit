@@ -54,6 +54,14 @@ export class DepauditWorld extends World {
   savedSlackUrl?: string | undefined;
   /** Computed transition result (@adw-11 transition scenarios in state_tracker.feature) */
   transition?: import("../../src/types/prComment.js").SlackTransition;
+  /** Mock git binary handle for @adw-12 scenarios */
+  gitMock?: import("./mockGitBinary.js").MockGitHandle;
+  /** Fixture path for @adw-12 setup scenarios */
+  setupFixturePath?: string;
+  /** Resolved trigger branch from @adw-12 setup scenarios */
+  setupResolvedBranch?: string;
+  /** Result from CommitOrPrExecutor invocation in @adw-12 BDD */
+  commitOrPrResult?: { exitCode: number; stdout: string; stderr: string };
 
   constructor(options: IWorldOptions) {
     super(options);

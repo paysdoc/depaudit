@@ -1,8 +1,22 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { parseDocument } from "yaml";
-import type { YAMLSeq } from "yaml";
+import { parseDocument, YAMLMap, YAMLSeq } from "yaml";
 import type { SupplyChainAccept } from "../types/depauditConfig.js";
 import type { IgnoredVuln } from "../types/osvScannerConfig.js";
+import { parse as parseToml } from "smol-toml";
+
+export interface BaselineEntry {
+  package: string;
+  version: string;
+  findingId: string;
+  expires: string;
+  reason: string;
+}
+
+export interface BaselineCveEntry {
+  id: string;
+  ignoreUntil: string;
+  reason: string;
+}
 
 /**
  * Removes orphaned supplyChainAccepts entries from a .depaudit.yml file.
@@ -147,4 +161,97 @@ export async function pruneOsvScannerToml(
   const newContent = collapsed.join("\n") + (collapsed.length > 0 ? "\n" : "");
   await writeFile(filePath, newContent, "utf8");
   return blocksToRemove.length;
+}
+
+/**
+ * Appends supply-chain baseline entries to a .depaudit.yml file.
+ * Creates supplyChainAccepts sequence if absent.
+ * Idempotent: skips entries whose (package, version, findingId) already exist.
+ *
+ * @returns the number of entries appended
+ */
+export async function appendDepauditYmlBaseline(
+  filePath: string,
+  entries: BaselineEntry[]
+): Promise<number> {
+  if (entries.length === 0) return 0;
+
+  const raw = await readFile(filePath, "utf8");
+  const doc = parseDocument(raw);
+
+  let scaSeq = doc.get("supplyChainAccepts", true) as YAMLSeq | null | undefined;
+  if (!scaSeq || !("items" in scaSeq)) {
+    scaSeq = doc.createNode([]) as YAMLSeq;
+    doc.set("supplyChainAccepts", scaSeq);
+  }
+
+  // Build set of existing keys for idempotency
+  const existingKeys = new Set<string>();
+  for (const item of scaSeq.items) {
+    if (!item || typeof item !== "object") continue;
+    const js = (item as { toJSON?: () => unknown }).toJSON?.() as Record<string, unknown> | undefined;
+    if (!js) continue;
+    existingKeys.add(`${js["package"]}|${js["version"]}|${js["findingId"]}`);
+  }
+
+  let appended = 0;
+  for (const entry of entries) {
+    const key = `${entry.package}|${entry.version}|${entry.findingId}`;
+    if (existingKeys.has(key)) continue;
+
+    const node = doc.createNode({
+      package: entry.package,
+      version: entry.version,
+      findingId: entry.findingId,
+      expires: entry.expires,
+      reason: entry.reason,
+    });
+    scaSeq.items.push(node);
+    existingKeys.add(key);
+    appended++;
+  }
+
+  if (appended === 0) return 0;
+
+  await writeFile(filePath, doc.toString(), "utf8");
+  return appended;
+}
+
+/**
+ * Appends CVE baseline entries to an osv-scanner.toml file.
+ * Idempotent: skips entries whose id already exists.
+ *
+ * @returns the number of entries appended
+ */
+export async function appendOsvScannerTomlBaseline(
+  filePath: string,
+  entries: BaselineCveEntry[]
+): Promise<number> {
+  if (entries.length === 0) return 0;
+
+  const raw = await readFile(filePath, "utf8");
+
+  // Parse existing ids for idempotency
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = parseToml(raw) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  const existing = (parsed["IgnoredVulns"] as Array<Record<string, unknown>> | undefined) ?? [];
+  const existingIds = new Set<string>(existing.map((e) => String(e["id"] ?? "")));
+
+  const toAppend = entries.filter((e) => !existingIds.has(e.id));
+  if (toAppend.length === 0) return 0;
+
+  let newContent = raw;
+  // Ensure file ends with exactly one newline before appending
+  if (!newContent.endsWith("\n")) newContent += "\n";
+
+  for (const entry of toAppend) {
+    newContent += `\n[[IgnoredVulns]]\nid = "${entry.id}"\nignoreUntil = ${entry.ignoreUntil}\nreason = "${entry.reason}"\n`;
+  }
+
+  await writeFile(filePath, newContent, "utf8");
+  return toAppend.length;
 }

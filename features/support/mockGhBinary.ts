@@ -11,6 +11,13 @@ export interface MockGhState {
   createExitOverride?: number;
   createErrorMessage?: string;
   exitOverride?: number;
+  // @adw-12: setup command fields
+  branchesMain?: { exists: boolean; body?: object };
+  defaultBranch?: string;
+  prCreateUrl?: string;
+  prCreateExitOverride?: number;
+  prCreateErrorMessage?: string;
+  remoteBranches?: string[];
 }
 
 export interface MockGhHandle {
@@ -57,7 +64,19 @@ const {
   createExitOverride,
   createErrorMessage,
   exitOverride,
+  branchesMain,
+  defaultBranch,
+  prCreateUrl,
+  prCreateExitOverride,
+  prCreateErrorMessage,
+  remoteBranches,
 } = state;
+
+// Global exit override — applied before endpoint-specific handlers so it
+// truly fails ALL gh invocations (e.g. for authentication-failure scenarios).
+if (typeof exitOverride === 'number') {
+  process.exit(exitOverride);
+}
 
 const endpoint = args[1] || '';
 const methodIdx = args.indexOf('--method');
@@ -123,8 +142,42 @@ if (isUpdateComment) {
   process.exit(0);
 }
 
-if (typeof exitOverride === 'number') {
-  process.exit(exitOverride);
+// @adw-12: gh api repos/.../branches/main
+if (args[0] === 'api' && /\\/branches\\/main$/.test(endpoint)) {
+  const bm = branchesMain !== undefined ? branchesMain : { exists: true };
+  const exists = Array.isArray(remoteBranches)
+    ? remoteBranches.includes('main')
+    : (bm.exists !== false);
+  if (exists) {
+    process.stdout.write(JSON.stringify(bm.body || { name: 'main' }) + '\\n');
+    process.exit(0);
+  } else {
+    process.stderr.write('HTTP 404: Not Found\\n');
+    process.exit(1);
+  }
+}
+
+// @adw-12: gh api repos/... --jq .default_branch
+if (args[0] === 'api' && args.includes('--jq') && args.includes('.default_branch')) {
+  const branch = defaultBranch || (Array.isArray(remoteBranches) && remoteBranches.length > 0 ? remoteBranches[0] : 'main');
+  process.stdout.write(branch + '\\n');
+  process.exit(0);
+}
+
+// @adw-12: gh pr create
+if (args[0] === 'pr' && args[1] === 'create') {
+  if (typeof prCreateExitOverride === 'number' && prCreateExitOverride !== 0) {
+    if (prCreateErrorMessage) process.stderr.write(prCreateErrorMessage + '\\n');
+    process.exit(prCreateExitOverride);
+  }
+  process.stdout.write((prCreateUrl || 'https://github.com/owner/repo/pull/1') + '\\n');
+  process.exit(0);
+}
+
+// @adw-12: gh secret set — assert NOT called
+if (args[0] === 'secret' && args[1] === 'set') {
+  // Allow but log — tests assert this was not called
+  process.exit(0);
 }
 
 process.exit(0);
