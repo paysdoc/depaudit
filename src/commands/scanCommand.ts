@@ -12,6 +12,7 @@ import { fetchSocketFindings, SocketAuthError, type PackageRef } from "../module
 import { findOrphans } from "../modules/orphanDetector.js";
 import { pruneDepauditYml, pruneOsvScannerToml } from "../modules/configWriter.js";
 import { writeFindingsJson } from "../modules/jsonReporter.js";
+import { renderMarkdownReport } from "../modules/markdownReporter.js";
 import type { ScanResult } from "../types/scanResult.js";
 import type { Manifest } from "../types/manifest.js";
 import type { Ecosystem } from "../types/finding.js";
@@ -58,7 +59,10 @@ async function extractPackagesFromManifests(manifests: Manifest[]): Promise<Pack
   return refs;
 }
 
-export async function runScanCommand(scanPath: string): Promise<ScanResult> {
+export async function runScanCommand(
+  scanPath: string,
+  options: { format: "markdown" | "text" } = { format: "markdown" }
+): Promise<ScanResult> {
   let depauditConfig;
   try {
     depauditConfig = await loadDepauditConfig(scanPath);
@@ -180,11 +184,14 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
   const classified = classifyFindings(allFindings, depauditConfig, osvConfig);
 
   const newFindings = classified.filter((c) => c.category === "new").map((c) => c.finding);
-  printFindings(newFindings);
 
   const expiredAccepts = classified.filter((c) => c.category === "expired-accept");
-  for (const cf of expiredAccepts) {
-    process.stderr.write(`expired accept: ${cf.finding.package} ${cf.finding.version} ${cf.finding.findingId}\n`);
+
+  if (options.format === "text") {
+    printFindings(newFindings);
+    for (const cf of expiredAccepts) {
+      process.stderr.write(`expired accept: ${cf.finding.package} ${cf.finding.version} ${cf.finding.findingId}\n`);
+    }
   }
 
   // Auto-prune orphaned accept entries (fail-open guard: only prune when source was available).
@@ -212,6 +219,10 @@ export async function runScanCommand(scanPath: string): Promise<ScanResult> {
   }
 
   const exitCode = newFindings.length === 0 && expiredAccepts.length === 0 && osvAvailable ? 0 : 1;
+
+  if (options.format === "markdown") {
+    process.stdout.write(renderMarkdownReport({ findings: classified, socketAvailable: socketResult.available, osvAvailable, exitCode }));
+  }
 
   await writeFindingsJson(scanPath, { findings: classified, socketAvailable: socketResult.available, osvAvailable, exitCode });
 

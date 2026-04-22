@@ -17,10 +17,11 @@ Commands:
 Options:
   -h, --help     Print this help message and exit
   -v, --version  Print the version and exit
+  -f, --format   Output format for stdout (markdown|text; default: markdown)
 `.trimStart();
 
 async function main(): Promise<void> {
-  let values: { help?: boolean; version?: boolean };
+  let values: { help?: boolean; version?: boolean; format?: string };
   let positionals: string[];
 
   try {
@@ -29,11 +30,12 @@ async function main(): Promise<void> {
       options: {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
+        format: { type: "string", short: "f" },
       },
       allowPositionals: true,
       strict: true,
     });
-    values = parsed.values as { help?: boolean; version?: boolean };
+    values = parsed.values as { help?: boolean; version?: boolean; format?: string };
     positionals = parsed.positionals;
   } catch (err: unknown) {
     process.stderr.write(`error: ${(err as Error).message}\n\n${USAGE}`);
@@ -58,8 +60,13 @@ async function main(): Promise<void> {
   }
 
   if (subcommand === "scan") {
+    const format = values.format ?? "markdown";
+    if (format !== "markdown" && format !== "text") {
+      process.stderr.write(`error: unknown --format value '${format}' (expected 'markdown' or 'text')\n\n${USAGE}`);
+      process.exit(2);
+    }
     try {
-      const result = await runScanCommand(cmdPath ?? process.cwd());
+      const result = await runScanCommand(cmdPath ?? process.cwd(), { format });
       process.exit(result.exitCode);
     } catch (err: unknown) {
       process.stderr.write(`error: ${(err as Error).message}\n`);

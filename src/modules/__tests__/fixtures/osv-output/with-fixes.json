@@ -1,0 +1,103 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "/tmp/scan-target/package-lock.json",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "lodash",
+            "version": "4.17.20",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "CVE-2021-23337",
+              "summary": "Command injection in lodash",
+              "database_specific": {
+                "severity": "HIGH"
+              },
+              "severity": [],
+              "aliases": ["GHSA-35jh-r3h4-6jhm"],
+              "affected": [
+                {
+                  "package": { "name": "lodash", "ecosystem": "npm" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "0" },
+                        { "fixed": "4.17.21" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "axios",
+            "version": "0.21.0",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "CVE-2021-3749",
+              "summary": "ReDoS in axios",
+              "database_specific": { "severity": "HIGH" },
+              "severity": [],
+              "affected": [
+                {
+                  "package": { "name": "axios", "ecosystem": "npm" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "0" },
+                        { "fixed": "0.21.1" },
+                        { "introduced": "0.22.0" },
+                        { "fixed": "0.24.0" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "minimist",
+            "version": "0.0.8",
+            "ecosystem": "npm"
+          },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-vh95-rmgr-6w4m",
+              "summary": "Prototype pollution in minimist",
+              "database_specific": {},
+              "severity": [{ "type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N" }],
+              "affected": [
+                {
+                  "package": { "name": "minimist", "ecosystem": "npm" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "0" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

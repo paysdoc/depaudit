@@ -40,6 +40,8 @@ export class DepauditWorld extends World {
   capturedFileContent?: string;
   /** Path to a temp directory containing a fake osv-scanner binary (for OSV failure scenarios) */
   fakeOsvBinDir?: string;
+  /** Captured stdout snapshots keyed by label — used by @adw-9 snapshot-reproducibility scenarios */
+  capturedStdout: Record<string, string> = {};
 
   constructor(options: IWorldOptions) {
     super(options);

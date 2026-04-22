@@ -10,5 +10,6 @@ export interface Finding {
   findingId: string;
   severity: Severity;
   summary?: string;
+  fixedVersion?: string;
   manifestPath: string;
 }

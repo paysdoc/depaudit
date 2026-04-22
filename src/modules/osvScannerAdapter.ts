@@ -67,6 +67,14 @@ function deriveSeverity(vuln: {
   return "UNKNOWN";
 }
 
+interface OsvVulnAffected {
+  package?: { name?: string; ecosystem?: string };
+  ranges?: Array<{
+    type?: string;
+    events?: Array<{ introduced?: string; fixed?: string; limit?: string }>;
+  }>;
+}
+
 interface OsvOutput {
   results: Array<{
     source: { path: string; type: string };
@@ -78,9 +86,30 @@ interface OsvOutput {
         database_specific?: { severity?: string };
         severity?: Array<{ type: string; score: string }>;
         aliases?: string[];
+        affected?: OsvVulnAffected[];
       }>;
     }>;
   }>;
+}
+
+function deriveFixedVersion(
+  vuln: { affected?: OsvVulnAffected[] },
+  pkgName: string,
+  osvEcosystem: string,
+  installedVersion: string
+): string | undefined {
+  const fixes: string[] = [];
+  for (const affected of vuln.affected ?? []) {
+    if (affected.package?.name !== pkgName || affected.package?.ecosystem !== osvEcosystem) continue;
+    for (const range of affected.ranges ?? []) {
+      for (const event of range.events ?? []) {
+        if (event.fixed) fixes.push(event.fixed);
+      }
+    }
+  }
+  const candidates = fixes.filter((f) => f.localeCompare(installedVersion) > 0);
+  if (candidates.length === 0) return undefined;
+  return candidates.sort((a, b) => a.localeCompare(b))[0];
 }
 
 export async function runOsvScanner(
@@ -120,7 +149,8 @@ export async function runOsvScanner(
       const mappedEcosystem = mapOsvEcosystem(ecosystem);
 
       for (const vuln of pkg.vulnerabilities) {
-        findings.push({
+        const fixedVersion = deriveFixedVersion(vuln, name, ecosystem, version);
+        const finding: import("../types/finding.js").Finding = {
           source: "osv",
           ecosystem: mappedEcosystem,
           package: name,
@@ -129,7 +159,9 @@ export async function runOsvScanner(
           severity: deriveSeverity(vuln),
           summary: vuln.summary,
           manifestPath: result.source.path,
-        });
+        };
+        if (fixedVersion !== undefined) finding.fixedVersion = fixedVersion;
+        findings.push(finding);
       }
     }
   }
