@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideCommentAction, readPriorState } from "../stateTracker.js";
+import { decideCommentAction, readPriorState, outcomeFromBody, computeTransition } from "../stateTracker.js";
 import type { PrComment } from "../../types/prComment.js";
 
 const MARKER = "<!-- depaudit-gate-comment -->";
@@ -139,5 +139,79 @@ describe("readPriorState", () => {
     const before = JSON.stringify(comments);
     readPriorState(comments);
     expect(JSON.stringify(comments)).toBe(before);
+  });
+});
+
+describe("outcomeFromBody", () => {
+  it("returns 'pass' for body containing 'depaudit gate: PASS'", () => {
+    expect(outcomeFromBody("## depaudit gate: PASS\n- new: 0\n")).toBe("pass");
+  });
+
+  it("returns 'fail' for body containing 'depaudit gate: FAIL'", () => {
+    expect(outcomeFromBody("## depaudit gate: FAIL\n- new: 1\n")).toBe("fail");
+  });
+
+  it("returns null for body containing neither header", () => {
+    expect(outcomeFromBody("some random markdown\n- item\n")).toBeNull();
+  });
+
+  it("returns 'pass' when both PASS and FAIL appear (PASS wins per readPriorState convention)", () => {
+    expect(outcomeFromBody("depaudit gate: PASS\ndepaudit gate: FAIL\n")).toBe("pass");
+  });
+
+  it("returns null for empty string", () => {
+    expect(outcomeFromBody("")).toBeNull();
+  });
+
+  it("does not match 'PASS' outside the 'depaudit gate: ' prefix", () => {
+    expect(outcomeFromBody("PASS the salt around")).toBeNull();
+  });
+
+  it("matches case-sensitively (lowercase 'depaudit gate: pass' returns null)", () => {
+    expect(outcomeFromBody("depaudit gate: pass")).toBeNull();
+  });
+});
+
+describe("computeTransition", () => {
+  it("none + fail → first-fail; should fire", () => {
+    const result = computeTransition("none", "fail");
+    expect(result.shouldFireSlack).toBe(true);
+    expect(result.label).toBe("first-fail");
+  });
+
+  it("pass + fail → pass-to-fail; should fire", () => {
+    const result = computeTransition("pass", "fail");
+    expect(result.shouldFireSlack).toBe(true);
+    expect(result.label).toBe("pass-to-fail");
+  });
+
+  it("fail + fail → fail-to-fail; should NOT fire", () => {
+    const result = computeTransition("fail", "fail");
+    expect(result.shouldFireSlack).toBe(false);
+    expect(result.label).toBe("fail-to-fail");
+  });
+
+  it("pass + pass → pass-to-pass; should NOT fire", () => {
+    const result = computeTransition("pass", "pass");
+    expect(result.shouldFireSlack).toBe(false);
+    expect(result.label).toBe("pass-to-pass");
+  });
+
+  it("fail + pass → fail-to-pass; should NOT fire", () => {
+    const result = computeTransition("fail", "pass");
+    expect(result.shouldFireSlack).toBe(false);
+    expect(result.label).toBe("fail-to-pass");
+  });
+
+  it("none + pass → first-pass; should NOT fire", () => {
+    const result = computeTransition("none", "pass");
+    expect(result.shouldFireSlack).toBe(false);
+    expect(result.label).toBe("first-pass");
+  });
+
+  it("is pure — same inputs produce same outputs", () => {
+    const r1 = computeTransition("pass", "fail");
+    const r2 = computeTransition("pass", "fail");
+    expect(r1).toEqual(r2);
   });
 });

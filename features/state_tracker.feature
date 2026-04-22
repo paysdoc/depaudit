@@ -141,3 +141,51 @@ Feature: depaudit — StateTracker PR-comment dedupe and pass/fail state detecti
     When StateTracker reconciles the PR comment for PR 42
     Then the body sent to the mock `gh` CLI is byte-identical to the supplied markdown body
 
+  # ─── Pass→fail transition detection (issue #11 — input to SlackReporter) ──
+  # StateTracker is the single locus for deciding whether the current push is a
+  # fail-edge event worth firing Slack. It reads the prior comment's outcome
+  # (already covered above) and compares to the current scan outcome.
+
+  @adw-11 @regression
+  Scenario: Prior PASS + current FAIL is a transition (Slack should fire)
+    When StateTracker evaluates a transition from prior outcome "pass" to current outcome "fail"
+    Then the transition reports that a Slack notification should fire
+
+  @adw-11 @regression
+  Scenario: Prior NONE (no prior gate comment) + current FAIL is a transition (first-ever fail fires)
+    When StateTracker evaluates a transition from prior outcome "none" to current outcome "fail"
+    Then the transition reports that a Slack notification should fire
+
+  @adw-11 @regression
+  Scenario: Prior FAIL + current FAIL is NOT a transition (sustained fail does not re-fire)
+    When StateTracker evaluates a transition from prior outcome "fail" to current outcome "fail"
+    Then the transition reports that a Slack notification should NOT fire
+
+  @adw-11 @regression
+  Scenario: Prior PASS + current PASS is NOT a transition (sustained pass is silent)
+    When StateTracker evaluates a transition from prior outcome "pass" to current outcome "pass"
+    Then the transition reports that a Slack notification should NOT fire
+
+  @adw-11 @regression
+  Scenario: Prior FAIL + current PASS is NOT a transition (we notify only on the fail edge)
+    When StateTracker evaluates a transition from prior outcome "fail" to current outcome "pass"
+    Then the transition reports that a Slack notification should NOT fire
+
+  @adw-11
+  Scenario: Prior NONE + current PASS is NOT a transition (a first-scan pass is silent)
+    When StateTracker evaluates a transition from prior outcome "none" to current outcome "pass"
+    Then the transition reports that a Slack notification should NOT fire
+
+  # ─── End-to-end sequence: pass→fail→fail→pass→fail over four pushes ───────
+
+  @adw-11 @regression
+  Scenario: Across fail → fail → pass → fail pushes, only two of the four are fail-edge transitions
+    When StateTracker evaluates a transition from prior outcome "none" to current outcome "fail"
+    Then the transition reports that a Slack notification should fire
+    When StateTracker evaluates a transition from prior outcome "fail" to current outcome "fail"
+    Then the transition reports that a Slack notification should NOT fire
+    When StateTracker evaluates a transition from prior outcome "fail" to current outcome "pass"
+    Then the transition reports that a Slack notification should NOT fire
+    When StateTracker evaluates a transition from prior outcome "pass" to current outcome "fail"
+    Then the transition reports that a Slack notification should fire
+

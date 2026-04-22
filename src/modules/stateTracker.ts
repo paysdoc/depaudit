@@ -1,4 +1,4 @@
-import type { PrComment, CommentAction, PriorState } from "../types/prComment.js";
+import type { PrComment, CommentAction, PriorState, PriorOutcome, CurrentOutcome, SlackTransition } from "../types/prComment.js";
 import { MARKDOWN_COMMENT_MARKER } from "../types/markdownReport.js";
 
 export function decideCommentAction(
@@ -25,4 +25,30 @@ export function readPriorState(comments: PrComment[]): PriorState {
   }
   // Marker-bearing but no recognisable header — commentId preserved for deduplication.
   return { priorOutcome: "none", commentId: existing.id };
+}
+
+export function outcomeFromBody(body: string): CurrentOutcome | null {
+  if (body.includes("depaudit gate: PASS")) return "pass";
+  if (body.includes("depaudit gate: FAIL")) return "fail";
+  return null;
+}
+
+export function computeTransition(
+  prior: PriorOutcome,
+  current: CurrentOutcome
+): SlackTransition {
+  const shouldFireSlack = current === "fail" && prior !== "fail";
+  let label: SlackTransition["label"];
+  if (current === "fail") {
+    label =
+      prior === "none" ? "first-fail" :
+      prior === "pass" ? "pass-to-fail" :
+                         "fail-to-fail";
+  } else {
+    label =
+      prior === "none" ? "first-pass" :
+      prior === "pass" ? "pass-to-pass" :
+                         "fail-to-pass";
+  }
+  return { shouldFireSlack, label };
 }
