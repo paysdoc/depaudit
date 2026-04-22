@@ -6,7 +6,16 @@ import {
   updatePrComment,
   GhApiError,
 } from "../modules/ghPrCommentClient.js";
-import { decideCommentAction } from "../modules/stateTracker.js";
+import {
+  decideCommentAction,
+  readPriorState,
+  outcomeFromBody,
+  computeTransition,
+} from "../modules/stateTracker.js";
+import {
+  postSlackNotification,
+  type SlackPostResult,
+} from "../modules/slackReporter.js";
 
 export interface PostPrCommentOptions {
   bodyFile: string;
@@ -16,6 +25,12 @@ export interface PostPrCommentOptions {
     listPrComments: typeof listPrComments;
     createPrComment: typeof createPrComment;
     updatePrComment: typeof updatePrComment;
+  };
+  slackReporter?: {
+    postSlackNotification: (
+      text: string,
+      options?: Record<string, unknown>
+    ) => Promise<SlackPostResult>;
   };
 }
 
@@ -106,6 +121,42 @@ export async function runPostPrCommentCommand(
     }
     process.stderr.write(`error: ${(err as Error).message}\n`);
     return 1;
+  }
+
+  // Slack notification — fail-soft; never affects exit code.
+  try {
+    const slack = options.slackReporter ?? { postSlackNotification };
+    const priorState = readPriorState(comments);
+    const currentOutcome = outcomeFromBody(body);
+
+    if (currentOutcome === null) {
+      process.stdout.write(
+        "slack: skipped (no recognisable PASS/FAIL header in body)\n"
+      );
+    } else {
+      const transition = computeTransition(priorState.priorOutcome, currentOutcome);
+      if (transition.shouldFireSlack) {
+        const text = `depaudit-gate failed on PR #${prNumber}: https://github.com/${repo}/pull/${prNumber}`;
+        const result = await slack.postSlackNotification(text);
+        if (result.posted) {
+          process.stdout.write(
+            `slack: posted first-fail notification for PR #${prNumber} (transition: ${transition.label})\n`
+          );
+        } else {
+          process.stdout.write(
+            `slack: skipped (${result.reason ?? "unknown reason"})\n`
+          );
+        }
+      } else {
+        process.stdout.write(
+          `slack: skipped (${transition.label}; no fail-edge transition)\n`
+        );
+      }
+    }
+  } catch (err: unknown) {
+    process.stdout.write(
+      `slack: skipped (unexpected error: ${(err as Error).message})\n`
+    );
   }
 
   return 0;

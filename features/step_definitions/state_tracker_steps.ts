@@ -423,3 +423,55 @@ Then<DepauditWorld>(
 );
 
 // Note: "stderr mentions {string}" is already defined in lint_steps.ts and applies here too.
+
+// ─── @adw-11 transition step definitions ────────────────────────────────────
+
+Before<DepauditWorld>({ tags: "@adw-11" }, function (this: DepauditWorld) {
+  this.transition = undefined;
+});
+
+When<DepauditWorld>(
+  "StateTracker evaluates a transition from prior outcome {string} to current outcome {string}",
+  async function (this: DepauditWorld, priorStr: string, currentStr: string) {
+    if (!["pass", "fail", "none"].includes(priorStr)) {
+      throw new Error(`invalid prior outcome '${priorStr}'`);
+    }
+    if (!["pass", "fail"].includes(currentStr)) {
+      throw new Error(`invalid current outcome '${currentStr}'`);
+    }
+    const { computeTransition } = (await import(
+      `${PROJECT_ROOT}/dist/modules/stateTracker.js?t=${Date.now()}`
+    )) as {
+      computeTransition: (
+        prior: "pass" | "fail" | "none",
+        current: "pass" | "fail"
+      ) => { shouldFireSlack: boolean; label: string };
+    };
+    this.transition = computeTransition(
+      priorStr as "pass" | "fail" | "none",
+      currentStr as "pass" | "fail"
+    ) as import("../../src/types/prComment.js").SlackTransition;
+  }
+);
+
+Then<DepauditWorld>(
+  "the transition reports that a Slack notification should fire",
+  function (this: DepauditWorld) {
+    assert.equal(
+      this.transition?.shouldFireSlack,
+      true,
+      `expected shouldFireSlack=true, got ${this.transition?.shouldFireSlack} (label=${this.transition?.label})`
+    );
+  }
+);
+
+Then<DepauditWorld>(
+  "the transition reports that a Slack notification should NOT fire",
+  function (this: DepauditWorld) {
+    assert.equal(
+      this.transition?.shouldFireSlack,
+      false,
+      `expected shouldFireSlack=false, got ${this.transition?.shouldFireSlack} (label=${this.transition?.label})`
+    );
+  }
+);

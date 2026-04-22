@@ -48,6 +48,12 @@ export class DepauditWorld extends World {
   bodyFilePath?: string;
   /** Resolved prior state from readPriorState (@adw-10) */
   priorState?: import("../../src/types/prComment.js").PriorState;
+  /** Mock Slack webhook server handle (@adw-11) */
+  slackMock?: import("./mockSlackServer.js").MockSlackHandle;
+  /** Saved SLACK_WEBHOOK_URL for restore in After hook (@adw-11) */
+  savedSlackUrl?: string | undefined;
+  /** Computed transition result (@adw-11 transition scenarios in state_tracker.feature) */
+  transition?: import("../../src/types/prComment.js").SlackTransition;
 
   constructor(options: IWorldOptions) {
     super(options);
