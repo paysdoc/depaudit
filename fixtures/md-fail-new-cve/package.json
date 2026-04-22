@@ -1,0 +1,1 @@
+{ "name": "md-fail-new-cve", "version": "1.0.0", "dependencies": { "semver": "5.7.1" } }

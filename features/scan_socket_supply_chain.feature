@@ -27,7 +27,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     Given a fixture Node repository at "fixtures/socket-alert-happy" whose manifests have no known CVEs
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for a package declared in that manifest
-    When I run "depaudit scan fixtures/socket-alert-happy"
+    When I run "depaudit scan --format text fixtures/socket-alert-happy"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
     And each finding line contains a package name, a version, a finding-ID, and a severity
@@ -46,7 +46,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     Given a fixture Node repository at "fixtures/socket-cve-and-alert" whose manifest pins a package with a known OSV CVE
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for a different package declared in that manifest
-    When I run "depaudit scan fixtures/socket-cve-and-alert"
+    When I run "depaudit scan --format text fixtures/socket-cve-and-alert"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is an OSV CVE identifier
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
@@ -58,7 +58,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     Given a fixture Node repository at "fixtures/socket-timeout-cve" whose manifest pins a package with a known OSV CVE
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that never responds within the client timeout
-    When I run "depaudit scan fixtures/socket-timeout-cve"
+    When I run "depaudit scan --format text fixtures/socket-timeout-cve"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is an OSV CVE identifier
     And stderr mentions "supply-chain unavailable"
@@ -78,7 +78,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     Given a fixture Node repository at "fixtures/socket-429-cve" whose manifest pins a package with a known OSV CVE
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that returns HTTP 429 for every request
-    When I run "depaudit scan fixtures/socket-429-cve"
+    When I run "depaudit scan --format text fixtures/socket-429-cve"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is an OSV CVE identifier
     And stderr mentions "supply-chain unavailable"
@@ -100,7 +100,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     Given a fixture Node repository at "fixtures/socket-retry-then-success" whose manifests have no known CVEs
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that returns HTTP 503 once and then responds with an "install-scripts" alert for a package in that manifest
-    When I run "depaudit scan fixtures/socket-retry-then-success"
+    When I run "depaudit scan --format text fixtures/socket-retry-then-success"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
     And stderr does not mention "supply-chain unavailable"
@@ -123,7 +123,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for a package in that manifest
     And the repository's .depaudit.yml has a valid `supplyChainAccepts` entry for a different package
-    When I run "depaudit scan fixtures/socket-alert-unrelated-accept"
+    When I run "depaudit scan --format text fixtures/socket-alert-unrelated-accept"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
 
@@ -133,7 +133,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for a package in that manifest
     And the repository's .depaudit.yml has a `supplyChainAccepts` entry for that (package, version) with `alertType` set to "typosquat"
-    When I run "depaudit scan fixtures/socket-alert-wrong-alerttype"
+    When I run "depaudit scan --format text fixtures/socket-alert-wrong-alerttype"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
 
@@ -143,7 +143,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for that package at version "1.2.3"
     And the repository's .depaudit.yml has a `supplyChainAccepts` entry for that package at version "0.9.0" with the same alertType
-    When I run "depaudit scan fixtures/socket-alert-wrong-version"
+    When I run "depaudit scan --format text fixtures/socket-alert-wrong-version"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
 
@@ -165,7 +165,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert at severity "HIGH" for a package in that manifest
     And the repository's .depaudit.yml sets `policy.severityThreshold` to "high"
-    When I run "depaudit scan fixtures/socket-alert-at-threshold"
+    When I run "depaudit scan --format text fixtures/socket-alert-at-threshold"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
 
@@ -176,7 +176,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
     Given a fixture Node repository at "fixtures/socket-alert-format" whose manifests have no known CVEs
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for a package in that manifest
-    When I run "depaudit scan fixtures/socket-alert-format"
+    When I run "depaudit scan --format text fixtures/socket-alert-format"
     Then the exit code is non-zero
     And stdout contains exactly one finding line
     And the finding line matches the pattern "<package> <version> <finding-id> <severity>"
@@ -192,7 +192,7 @@ Feature: depaudit scan — Socket.dev supply-chain findings and fail-open behavi
       | requirements.txt | pip       |
     And SOCKET_API_TOKEN is set to a valid test value
     And a mock Socket API that responds with an "install-scripts" alert for a package declared in "package.json" and a "typosquat" alert for a package declared in "requirements.txt"
-    When I run "depaudit scan fixtures/socket-polyglot-alerts"
+    When I run "depaudit scan --format text fixtures/socket-polyglot-alerts"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "install-scripts"
     And stdout contains at least one finding line whose finding-ID is the supply-chain alert type "typosquat"

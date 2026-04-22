@@ -14,7 +14,7 @@ Feature: depaudit scan — polyglot ecosystem support (pip, gomod, cargo, maven,
   @adw-6 @regression
   Scenario Outline: Discover and scan a <ecosystem> manifest (<manifest>) with a known CVE
     Given a fixture repository at "<fixture>" whose "<manifest>" pins a package with a known OSV CVE
-    When I run "depaudit scan <fixture>"
+    When I run "depaudit scan --format text <fixture>"
     Then the exit code is non-zero
     And stdout contains at least one finding line
     And each finding line contains a package name, a version, a finding-ID, and a severity
@@ -78,7 +78,7 @@ Feature: depaudit scan — polyglot ecosystem support (pip, gomod, cargo, maven,
       | go.mod           | gomod     |
       | requirements.txt | pip       |
     And each listed manifest pins a package with a known OSV CVE
-    When I run "depaudit scan fixtures/polyglot-monorepo"
+    When I run "depaudit scan --format text fixtures/polyglot-monorepo"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose package name is declared in "package.json"
     And stdout contains at least one finding line whose package name is declared in "go.mod"
@@ -93,7 +93,7 @@ Feature: depaudit scan — polyglot ecosystem support (pip, gomod, cargo, maven,
       | requirements.txt | pip       |
     And "requirements.txt" pins a package with a known OSV CVE
     And "package.json" and "go.mod" have no known CVEs
-    When I run "depaudit scan fixtures/polyglot-partial-findings"
+    When I run "depaudit scan --format text fixtures/polyglot-partial-findings"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose package name is declared in "requirements.txt"
     And no finding line's package name is declared in "package.json"
@@ -109,7 +109,7 @@ Feature: depaudit scan — polyglot ecosystem support (pip, gomod, cargo, maven,
     And "services/api/go.mod" pins a package with a known OSV CVE
     And "services/worker/requirements.txt" pins a package with a known OSV CVE
     And "package.json" has no known CVEs
-    When I run "depaudit scan fixtures/polyglot-nested"
+    When I run "depaudit scan --format text fixtures/polyglot-nested"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose package name is declared in "services/api/go.mod"
     And stdout contains at least one finding line whose package name is declared in "services/worker/requirements.txt"
@@ -132,7 +132,7 @@ Feature: depaudit scan — polyglot ecosystem support (pip, gomod, cargo, maven,
       | path             | description                                         |
       | pyproject.toml   | clean manifest, no CVEs                             |
       | requirements.txt | manifest pinning a package with a known OSV CVE     |
-    When I run "depaudit scan fixtures/pip-dual-manifest"
+    When I run "depaudit scan --format text fixtures/pip-dual-manifest"
     Then the exit code is non-zero
     And stdout contains at least one finding line whose package name is declared in "requirements.txt"
 

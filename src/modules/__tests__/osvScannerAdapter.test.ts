@@ -103,4 +103,74 @@ describe("runOsvScanner", () => {
     await expect(runOsvScanner(manifests, execFile)).rejects.toThrow(/unknown ecosystem/);
     await expect(runOsvScanner(manifests, execFile)).rejects.toThrow(/NuGet/);
   });
+
+  describe("fixedVersion derivation", () => {
+    it("populates fixedVersion from affected.ranges.events when OSV publishes a fix", async () => {
+      const json = await loadFixture("with-fixes.json");
+      const execFile = vi.fn<ExecFileFn>().mockRejectedValue({ code: 1, stdout: json, stderr: "" });
+      const manifests: Manifest[] = [{ ecosystem: "npm", path: "/tmp/proj/package.json" }];
+
+      const findings = await runOsvScanner(manifests, execFile);
+      const lodash = findings.find((f) => f.package === "lodash");
+      expect(lodash?.fixedVersion).toBe("4.17.21");
+    });
+
+    it("selects the LOWEST fixed version strictly greater than the installed version when multiple ranges publish different fixes", async () => {
+      const json = await loadFixture("with-fixes.json");
+      const execFile = vi.fn<ExecFileFn>().mockRejectedValue({ code: 1, stdout: json, stderr: "" });
+      const manifests: Manifest[] = [{ ecosystem: "npm", path: "/tmp/proj/package.json" }];
+
+      const findings = await runOsvScanner(manifests, execFile);
+      const axios = findings.find((f) => f.package === "axios");
+      // 0.21.0 installed; fixes are 0.21.1 and 0.24.0 — lowest qualifying is 0.21.1
+      expect(axios?.fixedVersion).toBe("0.21.1");
+    });
+
+    it("leaves fixedVersion undefined when no fixed event is published (only introduced)", async () => {
+      const json = await loadFixture("with-fixes.json");
+      const execFile = vi.fn<ExecFileFn>().mockRejectedValue({ code: 1, stdout: json, stderr: "" });
+      const manifests: Manifest[] = [{ ecosystem: "npm", path: "/tmp/proj/package.json" }];
+
+      const findings = await runOsvScanner(manifests, execFile);
+      const minimist = findings.find((f) => f.package === "minimist");
+      expect(minimist?.fixedVersion).toBeUndefined();
+    });
+
+    it("leaves fixedVersion undefined when installed version is already >= all published fixes", async () => {
+      const json: string = JSON.stringify({
+        results: [{
+          source: { path: "/tmp/proj/package-lock.json", type: "lockfile" },
+          packages: [{
+            package: { name: "lodash", version: "4.17.21", ecosystem: "npm" },
+            vulnerabilities: [{
+              id: "CVE-2021-23337",
+              summary: "test",
+              database_specific: { severity: "HIGH" },
+              severity: [],
+              affected: [{
+                package: { name: "lodash", ecosystem: "npm" },
+                ranges: [{ type: "SEMVER", events: [{ introduced: "0" }, { fixed: "4.17.21" }] }],
+              }],
+            }],
+          }],
+        }],
+      });
+      const execFile = vi.fn<ExecFileFn>().mockRejectedValue({ code: 1, stdout: json, stderr: "" });
+      const manifests: Manifest[] = [{ ecosystem: "npm", path: "/tmp/proj/package.json" }];
+
+      const findings = await runOsvScanner(manifests, execFile);
+      expect(findings[0]?.fixedVersion).toBeUndefined();
+    });
+
+    it("leaves fixedVersion undefined when no affected array is present (original with-findings.json)", async () => {
+      const json = await loadFixture("with-findings.json");
+      const execFile = vi.fn<ExecFileFn>().mockRejectedValue({ code: 1, stdout: json, stderr: "" });
+      const manifests: Manifest[] = [{ ecosystem: "npm", path: "/tmp/proj/package.json" }];
+
+      const findings = await runOsvScanner(manifests, execFile);
+      for (const f of findings) {
+        expect(f.fixedVersion).toBeUndefined();
+      }
+    });
+  });
 });

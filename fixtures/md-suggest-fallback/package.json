@@ -1,0 +1,1 @@
+{ "name": "md-suggest-fallback", "version": "1.0.0", "dependencies": { "node-serialize": "0.0.4" } }

@@ -86,7 +86,7 @@ Feature: depaudit scan — severity threshold filter on the "new" bucket
   Scenario: Threshold filters the new bucket before stdout output when mixed severities are present
     Given a fixture Node repository at "fixtures/mixed-severity-threshold-high" that produces one MEDIUM-severity OSV finding and one HIGH-severity OSV finding
     And the repository's .depaudit.yml sets `policy.severityThreshold` to "high"
-    When I run "depaudit scan fixtures/mixed-severity-threshold-high"
+    When I run "depaudit scan --format text fixtures/mixed-severity-threshold-high"
     Then the exit code is non-zero
     And stdout contains exactly one finding line
     And the finding line contains the severity "HIGH"

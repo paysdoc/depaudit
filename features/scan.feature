@@ -19,7 +19,7 @@ Feature: depaudit scan — CLI skeleton and OSV-Scanner CVE scan (npm, stdout)
   @adw-3 @regression
   Scenario: Node repo with a known CVE exits non-zero and prints the finding to stdout
     Given a fixture Node repository at "fixtures/vulnerable-npm" whose manifest pins a package with a known OSV CVE
-    When I run "depaudit scan fixtures/vulnerable-npm"
+    When I run "depaudit scan --format text fixtures/vulnerable-npm"
     Then the exit code is non-zero
     And stdout contains at least one finding line
     And each finding line contains a package name, a version, a finding-ID, and a severity
@@ -27,7 +27,7 @@ Feature: depaudit scan — CLI skeleton and OSV-Scanner CVE scan (npm, stdout)
   @adw-3 @regression
   Scenario: Finding line format is package, version, finding-ID, severity
     Given a fixture Node repository at "fixtures/one-finding-npm" that produces exactly one OSV finding
-    When I run "depaudit scan fixtures/one-finding-npm"
+    When I run "depaudit scan --format text fixtures/one-finding-npm"
     Then stdout contains exactly one finding line
     And the finding line matches the pattern "<package> <version> <finding-id> <severity>"
 
@@ -61,7 +61,7 @@ Feature: depaudit scan — CLI skeleton and OSV-Scanner CVE scan (npm, stdout)
       | packages/b/package.json   |
     And "packages/a/package.json" pins a package with a known OSV CVE
     And "package.json" and "packages/b/package.json" have no known CVEs
-    When I run "depaudit scan fixtures/monorepo-npm"
+    When I run "depaudit scan --format text fixtures/monorepo-npm"
     Then the exit code is non-zero
     And stdout contains a finding line whose package name matches a dependency declared in "packages/a/package.json"
 
