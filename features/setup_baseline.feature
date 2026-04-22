@@ -154,9 +154,9 @@ Feature: depaudit setup — baseline of existing findings at install time
 
   @adw-12 @regression
   Scenario: Baseline CVE entry records the finding's exact CVE identifier
-    Given a fixture Node repository at "fixtures/baseline-cve-id" whose manifest pins a package with a known OSV finding of identifier "CVE-BASELINE-0001"
+    Given a fixture Node repository at "fixtures/baseline-cve-id" whose manifest pins a package with a known OSV finding of identifier "GHSA-c2qf-rxjj-qqgw"
     When I run "depaudit setup" in "fixtures/baseline-cve-id"
-    Then "fixtures/baseline-cve-id/osv-scanner.toml" contains an `[[IgnoredVulns]]` entry with `id` equal to "CVE-BASELINE-0001"
+    Then "fixtures/baseline-cve-id/osv-scanner.toml" contains an `[[IgnoredVulns]]` entry with `id` equal to "GHSA-c2qf-rxjj-qqgw"
 
   @adw-12 @regression
   Scenario: Baseline supply-chain entry records strict (package, version, findingId) identity
