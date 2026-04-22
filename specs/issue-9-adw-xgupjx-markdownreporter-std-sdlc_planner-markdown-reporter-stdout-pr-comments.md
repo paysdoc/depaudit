@@ -13,7 +13,7 @@ This slice introduces `MarkdownReporter`: a deep module that renders the post-cl
 
 `depaudit scan` gains a `--format <markdown|text>` CLI flag. `markdown` becomes the default; `text` preserves the legacy line-based output (current `printFindings` behaviour) for users who pipe stdout into ad-hoc shell tooling and for the existing BDD test surface. JSON output goes to `.depaudit/findings.json` regardless of `--format` (that's the JsonReporter's contract; `--format` only governs stdout shape).
 
-Suggested actions in the new-findings table are deliberately a placeholder string in this slice — `"investigate; accept or upgrade"` — mirroring the precedent set by JsonReporter's `upgradeSuggestion: null` (issue #8). A future slice (the upgrade-resolver, tentatively coupled to triage skill work) will derive concrete fixed-version suggestions from OSV's `affected.ranges` data and surface them through the same column. The placeholder keeps the column shape stable so the future change is a content-only delta.
+Suggested actions in the new-findings table are derived from OSV's `affected.ranges[].events[]` data when a fixed version is available (rendered as `"upgrade <package> to >=<fixedVersion>"`), and fall back to the plain-text `"investigate; accept or upgrade"` when OSV does not publish a fix or the finding originates from Socket (supply-chain findings have no OSV fixed-version path). Expired-accept rows use `"re-evaluate or extend acceptance"`. This satisfies the issue's verbatim requirement: "Remediation suggestions come from OSV (fixed version) or are plain text when not available." The `MarkdownReportOptions.suggestedActionFor` hook is still exported so a future slice (e.g., per-org remediation playbooks) can override the default without a breaking signature change.
 
 ## User Story
 
@@ -58,8 +58,12 @@ Specifically:
 
 - **New `src/types/markdownReport.ts`** — exports the renderer's input options and the canonical column ordering as constants:
   - `MARKDOWN_COMMENT_MARKER = "<!-- depaudit-gate-comment -->"` — the HTML marker per PRD `:190`.
-  - `MarkdownReportOptions { suggestedActionFor?(cf: ClassifiedFinding): string }` — single hook for the future upgrade-resolver slice; defaults to the placeholder text.
+  - `MarkdownReportOptions { suggestedActionFor?(cf: ClassifiedFinding): string }` — single override hook; defaults described below.
   - No new domain types; the renderer consumes `ScanResult` directly.
+
+- **Extend `src/types/finding.ts`** with an optional `fixedVersion?: string` field. Populated by `OsvScannerAdapter` when OSV publishes a `type: "fixed"` event in `affected.ranges[].events[]`; absent on Socket findings and on OSV findings whose advisory has no published fix. Downstream modules that render this field (`MarkdownReporter`) treat `undefined` as "no fix available" and fall back to the plain-text suggestion.
+
+- **Extend `src/modules/osvScannerAdapter.ts`** to derive `fixedVersion` from OSV's vulnerability `affected[]` array. For each vulnerability, walk `affected[]` filtering to entries whose `package.name` and `package.ecosystem` match the parent package; within those, scan `ranges[].events[]` for `{ fixed: string }` events; collect the set of published fixes; choose the LOWEST fix value that is lexicographically greater than the installed `version` (best approximation of "smallest safe upgrade" without introducing a semver dependency). If none qualifies (no `fixed` events, or every fixed value ≤ installed version), leave `fixedVersion` unset. Socket findings are unaffected — `SocketScannerAdapter` does not set `fixedVersion`.
 
 - **New `src/modules/markdownReporter.ts`** — exports a single pure function `renderMarkdownReport(result: ScanResult, options?: MarkdownReportOptions): string`. Internally:
   1. Splits the classified array into the four `FindingCategory` buckets (`new`, `accepted`, `whitelisted`, `expired-accept`) with `Array.prototype.filter`.
@@ -87,7 +91,7 @@ Specifically:
        | severity | package | version | finding-id | suggested action |
        | --- | --- | --- | --- | --- |
        ```
-       Same column structure. Suggested action defaults to `"re-evaluate or extend acceptance"` for expired entries (different placeholder than `new` to reflect the user's likely next move).
+       Same column structure. Suggested action defaults to `"re-evaluate or extend acceptance"` for expired entries (no fixed-version path applies — the original acceptance already covered this CVE, so the user's next move is about the acceptance entry, not the dependency version).
      - Supply-chain-unavailable annotation, only when `result.socketAvailable === false`:
        ```
        > supply-chain unavailable — Socket scan failed; CVE-only gating ran for this run.
@@ -100,10 +104,10 @@ Specifically:
   4. Returns the full string. No I/O. No mutation of inputs. Determinism over identical inputs is the test contract.
 
 - **New `MarkdownReportOptions.suggestedActionFor` hook** — accepts a `ClassifiedFinding` and returns the cell string. When unset, the renderer uses:
-  - `"investigate; accept or upgrade"` for `new` rows.
-  - `"re-evaluate or extend acceptance"` for `expired-accept` rows.
+  - For `new` rows: if `cf.finding.fixedVersion` is set, the string `` `upgrade ${cf.finding.package} to >=${cf.finding.fixedVersion}` ``; otherwise the plain-text `"investigate; accept or upgrade"`.
+  - For `expired-accept` rows: `"re-evaluate or extend acceptance"` (the fix-version path doesn't fit the "already-accepted" workflow).
   
-  Reserving the hook now avoids a breaking signature change when the future upgrade-resolver slice begins computing `"upgrade ajv to ≥8.17.1"`-style strings (issue body's verbatim example, lifted from PRD user-story 31). This slice does NOT call `OsvScannerAdapter` or any new boundary; the placeholder strings are hard-coded fallback in the renderer, and the hook is exported for future extension.
+  This satisfies user-story 31's example (`"upgrade ajv to ≥8.17.1"`) and the issue's "Remediation suggestions come from OSV (fixed version) or are plain text when not available" directly from within the slice. The hook remains exported so a downstream slice (per-org remediation playbooks, Socket-specific hints, etc.) can override the defaults without a breaking signature change.
 
 - **Extend `src/cli.ts`** with a `--format` option:
   - `format: { type: "string", short: "f" }` added to `parseArgs` options.
@@ -140,9 +144,12 @@ Use these files to implement the feature:
 - `src/commands/scanCommand.ts` — composition root to extend. Lines `:183-188` (current stdout/stderr emit) become a format-switched block. Line `:214` (`exitCode` computation) must execute before the markdown emit. Line `:216` (`writeFindingsJson`) stays put — format-orthogonal.
 - `src/modules/stdoutReporter.ts` — existing line-based reporter; reused unchanged for `--format text`.
 - `src/modules/jsonReporter.ts` — house-style reference for a deep reporter module. The `buildFindingsJsonSchema` pure helper at `:9-41` is the structural twin of `renderMarkdownReport`'s body — sort comparator can be lifted verbatim.
+- `src/modules/osvScannerAdapter.ts` — extended to read `vuln.affected[].ranges[].events[].fixed` and populate `Finding.fixedVersion`. Existing behaviour (ecosystem mapping, severity derivation, error-on-code-1 handling) is preserved.
+- `src/modules/__tests__/osvScannerAdapter.test.ts` — extended with coverage for the new fixed-version derivation path (single range, multiple ranges, no `fixed` events, installed version already at or above the fix).
+- `src/modules/__tests__/fixtures/osv-output/with-findings.json` — existing OSV fixture; extend (or add sibling fixtures like `with-fixes.json`) so the new-unit-test path has realistic raw JSON to parse.
 - `src/types/scanResult.ts` — `ScanResult { findings, socketAvailable, osvAvailable, exitCode }` is the renderer's input. No extension.
 - `src/types/depauditConfig.ts` — `ClassifiedFinding` (`:40-43`) and `FindingCategory` (`:38`) are the per-entry types the renderer buckets and renders.
-- `src/types/finding.ts` — `Finding`, `Severity`, `FindingSource`, `Ecosystem`. Cell values come from these fields.
+- `src/types/finding.ts` — `Finding`, `Severity`, `FindingSource`, `Ecosystem`. Extended with `fixedVersion?: string` so OsvScannerAdapter can surface OSV's published fix and MarkdownReporter's default suggested-action resolver can use it.
 - `src/modules/__tests__/jsonReporter.test.ts` — fixture-driven snapshot harness pattern; markdown reporter test layout copies it (temp dir / fixture file comparison).
 - `src/modules/__tests__/findingMatcher.test.ts` — pure-function test idiom for the renderer's bucketing logic.
 - `features/step_definitions/scan_steps.ts` — `runDepaudit` helper (`:97`+), `FINDING_LINE_RE` (`:12`). Existing scenarios that assert finding lines need updating to pass `--format text`. Step definitions for new markdown assertions can live alongside.
@@ -166,8 +173,9 @@ Use these files to implement the feature:
 - `src/modules/__tests__/fixtures/markdown-output/` — checked-in expected markdown files:
   - `pass-empty.expected.md` — clean scan, all categories at 0, both sources available.
   - `pass-with-accepts.expected.md` — passing scan with non-zero `accepted` and `whitelisted` counts but no `new` or `expired-accept`.
-  - `fail-new-only.expected.md` — failing scan with one `new` finding from `osv`.
-  - `fail-new-multiple.expected.md` — failing scan with several `new` findings from both sources, asserts sort order and table rows.
+  - `fail-new-only.expected.md` — failing scan with one `new` finding from `osv` that has NO `fixedVersion`; asserts plain-text fallback in the `suggested action` cell.
+  - `fail-new-with-fix.expected.md` — failing scan with one `new` OSV finding whose `fixedVersion` is populated; asserts the `suggested action` cell renders `upgrade <package> to >=<fixedVersion>`.
+  - `fail-new-multiple.expected.md` — failing scan with several `new` findings from both sources (one OSV with fix, one OSV without fix, one Socket); asserts sort order, mixed suggested-action shapes, and plain-text fallback for Socket rows.
   - `fail-expired-only.expected.md` — failing scan with only `expired-accept` (no `new`); demonstrates the expired-accepts section appears and the new-findings table is omitted.
   - `fail-mixed.expected.md` — failing scan with `new` + `expired-accept` + `accepted` + `whitelisted` together; both tables present, all four counts non-zero.
   - `fail-supply-chain-unavailable.expected.md` — failing scan with `socketAvailable: false` annotation present.
@@ -176,18 +184,20 @@ Use these files to implement the feature:
   - `cell-escapes.expected.md` — a `new` finding whose `package` contains a literal `|` and whose `summary` contains a newline; demonstrates pipe-escape and newline-replacement.
 - `features/scan_markdown_reporter.feature` — new BDD feature file tagged `@adw-9`.
 - `features/step_definitions/scan_markdown_reporter_steps.ts` — step definitions for marker-presence, header, count-list, table-presence, annotation-presence assertions.
-- `fixtures/md-*/` — per-scenario BDD fixtures (enumerated in Task 7). Each scenario ships a dedicated fixture under the `md-` prefix so its preconditions (CVE pinning, Socket mock setup, OSV fail-harness, `.gitignore` for findings.json) are isolated from other slices.
+- `fixtures/md-*/` — per-scenario BDD fixtures (enumerated in Task 8). Each scenario ships a dedicated fixture under the `md-` prefix so its preconditions (CVE pinning, Socket mock setup, OSV fail-harness, `.gitignore` for findings.json) are isolated from other slices.
 - `app_docs/feature-xgupjx-markdown-reporter.md` — implementation summary in the house style.
 
 ## Implementation Plan
 
 ### Phase 1: Foundation
 
-Define the renderer's input shape (already covered by `ScanResult`), introduce the new `--format` types and constants, and stand up the deep reporter module with a pure function and zero I/O.
+Define the renderer's input shape (already covered by `ScanResult`), introduce the new `--format` types and constants, extend `Finding` + `OsvScannerAdapter` so OSV fixed-version data reaches the renderer, and stand up the deep reporter module with a pure function and zero I/O.
 
+- Extend `src/types/finding.ts` with `fixedVersion?: string`.
+- Extend `src/modules/osvScannerAdapter.ts` to parse `vuln.affected[].ranges[].events[].fixed` and populate `Finding.fixedVersion` with the lowest published fix that is strictly greater than the installed version.
 - Create `src/types/markdownReport.ts` with `MARKDOWN_COMMENT_MARKER` and `MarkdownReportOptions`.
-- Create `src/modules/markdownReporter.ts` exporting `renderMarkdownReport(result, options?): string` with the structural logic but using placeholder action strings.
-- Land this slice without touching `cli.ts` or `scanCommand.ts` yet — the renderer is independently usable and unit-testable.
+- Create `src/modules/markdownReporter.ts` exporting `renderMarkdownReport(result, options?): string`. The default `suggestedActionFor` uses `Finding.fixedVersion` when available (`"upgrade <package> to >=<fixedVersion>"`) and falls back to the plain-text `"investigate; accept or upgrade"` otherwise; expired-accept rows render `"re-evaluate or extend acceptance"`.
+- Land this sub-phase without touching `cli.ts` or `scanCommand.ts` yet — the renderer is independently usable and unit-testable.
 
 ### Phase 2: Snapshot test surface
 
@@ -212,7 +222,7 @@ Wire the renderer behind `--format`, default to markdown, preserve text mode, an
 
 Execute every step in order, top to bottom.
 
-### Task 1 — Define the markdown-reporter types and constants
+### Task 1 — Define renderer types and extend `Finding` with `fixedVersion`
 
 - Create `src/types/markdownReport.ts`.
 - Export `export const MARKDOWN_COMMENT_MARKER = "<!-- depaudit-gate-comment -->" as const;`.
@@ -223,9 +233,37 @@ Execute every step in order, top to bottom.
   }
   ```
   (Import `ClassifiedFinding` from `./depauditConfig.js`.)
-- No behaviour; pure type / constant exports.
+- Extend `src/types/finding.ts` — add optional `fixedVersion?: string` on the `Finding` interface (place it after `summary?: string`). Downstream code treats `undefined` as "no fix available". No runtime code in this file changes.
+- No behaviour changes beyond type / constant exports.
 
-### Task 2 — Implement `src/modules/markdownReporter.ts`
+### Task 2 — Extend `OsvScannerAdapter` to populate `fixedVersion`
+
+- Modify `src/modules/osvScannerAdapter.ts`:
+  - Extend the internal `OsvOutput.vulnerabilities[]` shape with an optional `affected` array:
+    ```ts
+    affected?: Array<{
+      package?: { name?: string; ecosystem?: string };
+      ranges?: Array<{
+        type?: string;
+        events?: Array<{ introduced?: string; fixed?: string; limit?: string }>;
+      }>;
+    }>;
+    ```
+  - Add a helper `deriveFixedVersion(vuln, pkgName, osvEcosystem, installedVersion): string | undefined`:
+    1. Walk `vuln.affected ?? []`, filter to entries whose `package?.name === pkgName` AND `package?.ecosystem === osvEcosystem`. (Match against the OSV-ecosystem string, not the mapped one — OSV publishes `npm`, `PyPI`, etc.)
+    2. From matching `affected[]`, collect every `events[].fixed` string value.
+    3. Filter the collected fixes to those strictly `>` the installed version via lexicographic `localeCompare`. (Lexicographic compare is a pragmatic baseline; most package versions sort correctly this way within an ecosystem. Pull in a proper semver comparator only if test fixtures surface a counter-example.)
+    4. If the filtered set is non-empty, return the LOWEST one (also via `localeCompare`). Else return `undefined`.
+  - In the vulnerability loop (where findings are constructed), pass the OSV-ecosystem string through to `deriveFixedVersion` and add `fixedVersion: deriveFixedVersion(vuln, name, ecosystem, version)` to the pushed `Finding`. Setting to `undefined` keeps the field absent on JSON serialisation, matching current Finding consumers.
+  - Socket findings are produced by `SocketScannerAdapter` and do NOT get this treatment; `fixedVersion` remains absent on them.
+- Update `src/modules/__tests__/osvScannerAdapter.test.ts`:
+  - Add test: "populates `fixedVersion` from `affected.ranges.events` when OSV publishes a fix".
+  - Add test: "leaves `fixedVersion` undefined when no `fixed` event is published (only `introduced`)".
+  - Add test: "leaves `fixedVersion` undefined when the installed version is already ≥ all published fixes".
+  - Add test: "selects the LOWEST fixed version when multiple ranges publish different fixes".
+  - Extend existing `with-findings.json` fixture (or add `with-fixes.json` sibling fixture) so at least one vulnerability has a non-empty `affected[].ranges[].events[]` with a `fixed` event.
+
+### Task 3 — Implement `src/modules/markdownReporter.ts`
 
 - New file. No external runtime deps; pure rendering only.
 - Imports: types from `../types/scanResult.js`, `../types/depauditConfig.js`, `../types/markdownReport.js`, `../types/finding.js`. Plus the constant `MARKDOWN_COMMENT_MARKER`.
@@ -233,7 +271,7 @@ Execute every step in order, top to bottom.
   - `function bucketByCategory(findings: ClassifiedFinding[]): Record<FindingCategory, ClassifiedFinding[]>` — splits into the four buckets.
   - `function compareForRender(a: ClassifiedFinding, b: ClassifiedFinding): number` — same comparator as `jsonReporter.buildFindingsJsonSchema` (manifestPath, source, findingId, package, version via localeCompare). Lift the body to keep the comparators in lockstep.
   - `function escapeCell(s: string): string` — replaces `\\` → `\\\\`, `|` → `\\|`, then `\r?\n` → ` `. Order matters (escape backslashes first).
-  - `function defaultSuggestedAction(cf: ClassifiedFinding): string` — returns `"re-evaluate or extend acceptance"` when `cf.category === "expired-accept"`, else `"investigate; accept or upgrade"`.
+  - `function defaultSuggestedAction(cf: ClassifiedFinding): string` — returns `"re-evaluate or extend acceptance"` when `cf.category === "expired-accept"`; otherwise, when `cf.finding.fixedVersion` is a non-empty string, returns `` `upgrade ${cf.finding.package} to >=${cf.finding.fixedVersion}` ``; otherwise `"investigate; accept or upgrade"`. This satisfies the issue's "Remediation suggestions come from OSV (fixed version) or are plain text when not available" in one place.
   - `function renderTable(rows: ClassifiedFinding[], suggestedAction: (cf: ClassifiedFinding) => string): string` — emits the `severity | package | version | finding-id | suggested action` header + separator + body rows. Returns `""` when `rows.length === 0`.
 - Main entry:
   ```ts
@@ -275,7 +313,7 @@ Execute every step in order, top to bottom.
   - Join with `"\n"`, append a trailing `"\n"`, return.
 - Pure: no I/O, no Date, no random. Same input → same output.
 
-### Task 3 — Snapshot-test `markdownReporter`
+### Task 4 — Snapshot-test `markdownReporter`
 
 - New file: `src/modules/__tests__/markdownReporter.test.ts`.
 - Use Vitest (matches existing test pattern; runs under `bun test`).
@@ -296,8 +334,10 @@ Execute every step in order, top to bottom.
      - Omitted when `new` count is zero (no header, no separator).
      - Header row exactly `| severity | package | version | finding-id | suggested action |`.
      - Rows in deterministic sort order across `(manifestPath, source, findingId, package, version)`.
-     - Each row's `suggested action` cell is `"investigate; accept or upgrade"` by default.
-     - Custom `options.suggestedActionFor` is called per row and the returned string lands in the `suggested action` cell.
+     - Each row's `suggested action` cell is `"investigate; accept or upgrade"` by default when `finding.fixedVersion` is absent.
+     - When `finding.fixedVersion` is set (e.g., `"1.2.4"`), the `suggested action` cell reads `upgrade <package> to >=1.2.4` and includes the OSV-published version string verbatim.
+     - Socket-sourced new findings (which never have `fixedVersion`) render the plain-text fallback.
+     - Custom `options.suggestedActionFor` is called per row and the returned string lands in the `suggested action` cell (overrides both fixed-version and plain-text defaults).
   4. **Expired-accepts section** —
      - Omitted when `expired-accept` count is zero.
      - Section header reads `### Expired accepts (<n>)`.
@@ -317,7 +357,7 @@ Execute every step in order, top to bottom.
   8. **Fixture comparison** — for each fixture file in `src/modules/__tests__/fixtures/markdown-output/`, build the corresponding `ScanResult` and assert `assert.strictEqual(renderMarkdownReport(result), await loadFixture(name))`.
 - Build the fixture files. Each file is the FULL expected markdown including the leading blank line, marker, trailing newline. Use `bun run test` first to capture actual output, then check that against the spec, then commit. (Snapshot test bootstrapping pattern.)
 
-### Task 4 — Add `--format` flag to `src/cli.ts`
+### Task 5 — Add `--format` flag to `src/cli.ts`
 
 - Modify `src/cli.ts`:
   - Extend the `parseArgs` `options` map (`:30-33`):
@@ -345,7 +385,7 @@ Execute every step in order, top to bottom.
   - Lint command is unaffected.
 - The `--format` flag MUST work positionally with the path argument. Verify by hand: `depaudit scan --format text fixtures/clean-npm` and `depaudit scan fixtures/clean-npm --format text` both succeed. `parseArgs` with `allowPositionals: true` (line `:33`) handles both.
 
-### Task 5 — Wire `MarkdownReporter` into `ScanCommand`
+### Task 6 — Wire `MarkdownReporter` into `ScanCommand`
 
 - Modify `src/commands/scanCommand.ts`:
   - Add imports:
@@ -382,7 +422,7 @@ Execute every step in order, top to bottom.
   - The `osvAvailable === false` catastrophic path continues to classification (matches current behaviour after JsonReporter slice). Markdown emit fires with the OSV-unavailable annotation.
   - `ScanResult` shape is unchanged. The format option does not leak into the return value.
 
-### Task 6 — Migrate existing BDD scenarios to opt into `--format text`
+### Task 7 — Migrate existing BDD scenarios to opt into `--format text`
 
 For every existing feature file OTHER than `features/scan_json_reporter.feature` and `features/lint*.feature`, audit each `When I run "depaudit scan …"` step. If the same scenario contains any of these stdout-line assertions:
 
@@ -413,88 +453,110 @@ For scenarios whose assertions only check exit code, stderr, file presence, or `
 
 Validation after migration: `bun run test:e2e -- --tags "@regression"` must pass with zero failures. Any failure indicates a missed scenario or a stronger-than-expected coupling between stdout shape and the assertion.
 
-### Task 7 — Create BDD fixtures
+### Task 8 — Create BDD fixtures
 
-Each scenario in `features/scan_markdown_reporter.feature` gets its own `fixtures/md-*/` directory so preconditions are isolated and scenarios can run in parallel. Every fixture is an npm project with `package.json` + `package-lock.json` and a `.gitignore` that includes `.depaudit/` (to silence the JsonReporter warning so stdout assertions are clean).
+Each scenario in `features/scan_markdown_reporter.feature` gets its own `fixtures/md-*/` directory so preconditions are isolated and scenarios can run in parallel. Every fixture is a project with `package.json` + lockfile (or `requirements.txt` for polyglot) and a `.gitignore` that includes `.depaudit/` (to silence the JsonReporter warning so stdout assertions are clean).
 
-**Pass / fail outcome fixtures:**
-- `fixtures/md-pass-clean/`: clean npm project (no CVEs, no Socket alerts).
-- `fixtures/md-fail-cve/`: npm project pinning a package with a known OSV CVE (copy from `fixtures/json-cve-schema`).
-- `fixtures/md-fail-mixed/`: npm project pinning a CVE-bearing package + `osv-scanner.toml` `[[IgnoredVulns]]` for a DIFFERENT CVE-bearing package + `commonAndFine` whitelist for a Socket alert. Produces non-zero `new`, `accepted`, and `whitelisted` counts simultaneously.
+The `features/scan_markdown_reporter.feature` file is the authoritative source of fixture names (each scenario's Given step names its fixture path). Build one directory per fixture referenced there. The fixture shapes collapse into a handful of patterns:
 
-**Expired-accept fixtures:**
-- `fixtures/md-fail-expired-only/`: npm project + `osv-scanner.toml` `[[IgnoredVulns]]` whose `ignoreUntil` lint-passes but is treated as expired at scan time (reuse the timing-trick pattern from `fixtures/json-class-expired`).
+**Clean-repo shape (no CVEs, Socket mock returns no alerts):**
+- Used by fixtures whose scenarios need a passing gate: `md-default-format`, `md-explicit-format`, `md-pass-clean`, `md-snapshot-pass`, `md-socket-up-no-annotation`, `md-whitelisted-not-in-table` (with `.depaudit.yml`), `md-new-row-socket` (with Socket alert), `md-suggest-socket-fallback` (with Socket alert), `md-socket-503-annotation`, `md-socket-timeout-annotation`, `md-socket-429-annotation`, `md-snapshot-sca-unavail`, `md-unknown-format`. Each is an npm project with a package that has no known CVE.
 
-**Supply-chain / OSV availability fixtures:**
-- `fixtures/md-supply-chain-down/`: clean npm project; scenario spins up a mock Socket server that returns 503. Expects supply-chain-unavailable annotation and PASS header (no CVEs).
-- `fixtures/md-osv-down/`: npm project; scenario uses the `fakeOsvBinDir` harness from `@adw-13`. Expects OSV-unavailable annotation and FAIL header (osvAvailable=false → exit non-zero).
+**CVE-bearing shape (package pins a version with a known OSV CVE):**
+- Used by: `md-marker-present`, `md-fail-new-cve`, `md-new-table-columns`, `md-new-row-content`, `md-suggest-fallback` (CVE without published fix), `md-accepted-not-in-table` (paired with `osv-scanner.toml` `[[IgnoredVulns]]`), `md-pass-no-new-table` (paired with `osv-scanner.toml` `[[IgnoredVulns]]`), `md-no-expired-section`, `md-snapshot-fail`. Copy the pinning pattern from `fixtures/json-cve-schema`.
 
-**Format-flag fixtures:**
-- `fixtures/md-format-text/`: clean npm project. Scenario invokes with `--format text` and asserts legacy line-based stdout (no markdown marker on stdout).
-- `fixtures/md-format-explicit/`: clean npm project. Scenario invokes with `--format markdown` and asserts marker is present.
-- `fixtures/md-format-default/`: clean npm project. Scenario invokes with no `--format` flag and asserts marker is present (default = markdown).
-- `fixtures/md-format-unknown/`: clean npm project. Scenario invokes with `--format yaml` and asserts exit 2 + stderr mentions `unknown --format value`.
+**CVE-with-published-fix shape:**
+- `md-suggest-osv-fix`: pins a package whose OSV advisory publishes a `fixed` version (e.g. `1.2.4`). The OsvScannerAdapter populates `Finding.fixedVersion`, and the suggested-action cell must mention the fixed version.
 
-**Marker / header / annotation fixtures:** these reuse the above as appropriate; no new fixtures needed for marker / header assertions.
+**Expired-accept shape (`osv-scanner.toml` `[[IgnoredVulns]]` whose `ignoreUntil` lint-passes but is treated as expired at scan time):**
+- Used by: `md-expired-section`, `md-expired-only`, `md-snapshot-expired`. Reuse the timing-trick pattern from `fixtures/json-class-expired`.
+
+**Mixed-classification shape (new + accepted + whitelisted together):**
+- `md-mixed-counts`: pins a CVE-bearing package + two additional packages (one matched by `supplyChainAccepts`, one matched by `commonAndFine`). The Socket mock returns an alert for each of those two packages.
+
+**Polyglot shape (multiple manifests):**
+- `md-polyglot-table`: contains both `package.json` (npm) and `requirements.txt` (pip), each pinning a CVE-bearing package.
+
+**Flag-rejection shape:**
+- `md-unknown-format`: any clean-repo shape; only the invocation differs (`--format yaml`).
 
 All fixtures must include `.gitignore` with `.depaudit/` to suppress the JsonReporter gitignore warning during stdout assertions.
 
-### Task 8 — Author `features/scan_markdown_reporter.feature`
+When a scenario requires a Socket mock (see `features/support/mockSocketServer.ts`), the mock behaviour is configured by the Before hook reading the Given step's wording — fixture directories only carry static files, not mock configuration.
 
+### Task 9 — Author `features/scan_markdown_reporter.feature`
+
+The feature file (`features/scan_markdown_reporter.feature`) is the authoritative BDD specification for this slice. The scenario_writer agent authors it. All scenarios are tagged `@adw-9`; scenarios that guard the primary contract also get `@regression`. The required scenario clusters (each cluster is one or more scenarios — the exact split lives in the file):
+
+- **Format selection.** Default format is markdown (no `--format` flag); explicit `--format markdown` matches; unknown format values (e.g. `--format yaml`) exit non-zero with stderr mentioning `format` and `markdown`.
+- **HTML comment marker.** The `<!-- depaudit-gate-comment -->` marker appears on every markdown emission, on pass and fail alike.
+- **Pass shape and category counts.** Clean scan emits `## depaudit gate: PASS`, all four counts at zero, no new-findings or expired-accepts tables. Passing scans with only-accepted or only-whitelisted findings increment the respective count but do NOT populate the new-findings table.
+- **Fail shape and new-findings table.** CVE-bearing scan emits `## depaudit gate: FAIL`, populates the `### New findings` table, and the table header reads exactly `| severity | package | version | finding-id | suggested action |`. Each row carries the finding's package, version, finding-id, and severity. Socket supply-chain findings appear in the same table alongside OSV rows.
+- **Suggested-action content.** When OSV publishes a fixed version, the suggested-action cell mentions that version (e.g. `upgrade <package> to >=1.2.4`). When OSV has no fix (or for Socket findings), the cell contains the plain-text fallback `investigate; accept or upgrade`.
+- **Classification counts in the header.** Mixed scans with `new`, `accepted`, `whitelisted`, and `expired` findings report every count.
+- **Expired-accepts section.** Appears when `expired-accept` count > 0; omitted otherwise. Expired-only scans render a fail header plus the expired-accepts section and NO new-findings table.
+- **Supply-chain-unavailable annotation.** Socket HTTP 503, HTTP 429, or timeout each trigger `> supply-chain unavailable` on stdout. Socket success omits the annotation.
+- **Snapshot reproducibility.** Two back-to-back scans on the same fixture produce byte-identical markdown stdout, across pass, fail, expired-only, and supply-chain-unavailable shapes.
+- **Polyglot coverage.** Findings from multiple ecosystems (npm + pip) land in one new-findings table.
+
+Feature-file requirements:
 - File header: `@adw-9`.
-- Feature statement: "As a contributor I want `depaudit scan` to print a PR-comment-ready markdown report on stdout so that I can paste the output into a PR comment, and so that the CI step that posts the comment has nothing to format itself."
-- Background reuses `the osv-scanner binary is installed and on PATH` and `the depaudit CLI is installed and on PATH`.
-- Scenarios (every one tagged `@adw-9`; most also `@regression`):
+- Feature statement names the contributor ("a maintainer reviewing a PR") perspective and the dual-use (CI PR-comment + local terminal) of the same byte stream.
+- Background uses `the osv-scanner binary is installed and on PATH` and `the depaudit CLI is installed and on PATH` so individual scenarios don't repeat these prerequisites.
+- Every scenario's Given step names its own `fixtures/md-*/` directory so fixtures are isolated per scenario.
+- Scenarios that need Socket behaviour (normal, 503, 429, timeout) use the mock Socket server from `features/support/mockSocketServer.ts`, configured by the Given step's wording.
 
-  **Default format and explicit format:**
-  1. `Default format is markdown — stdout begins with the comment marker on a clean repo` (`fixtures/md-format-default`). Asserts: exit 0, stdout includes `<!-- depaudit-gate-comment -->`, stdout includes `## depaudit gate: PASS`.
-  2. `Explicit --format markdown matches the default` (`fixtures/md-format-explicit`). Asserts: same assertions as scenario 1.
-  3. `--format text emits legacy line-based stdout (no marker)` (`fixtures/md-format-text`). Asserts: exit 0, stdout does NOT include `<!-- depaudit-gate-comment -->`, stdout has zero finding lines (since clean repo).
-  4. `Unknown --format value exits 2` (`fixtures/md-format-unknown`). Asserts: exit 2, stderr mentions `unknown --format value`.
+### Task 10 — Author `features/step_definitions/scan_markdown_reporter_steps.ts`
 
-  **Pass header and category counts:**
-  5. `Pass header and zero counts on a clean scan` (`fixtures/md-pass-clean`). Asserts: stdout contains `## depaudit gate: PASS`, contains `- new: 0`, `- accepted: 0`, `- whitelisted: 0`, `- expired: 0`.
+Step wordings MUST match those in `features/scan_markdown_reporter.feature` verbatim (the feature file is authoritative). File imports: `Given/When/Then` from `@cucumber/cucumber`, `assert` from `node:assert/strict`, `DepauditWorld` from `../support/world.js`. Reuse `runDepaudit` from `./scan_steps.js` for any `When` steps not already defined.
 
-  **Fail header and new-findings table:**
-  6. `Fail header on a CVE-bearing scan` (`fixtures/md-fail-cve`). Asserts: exit non-zero, stdout contains `## depaudit gate: FAIL`, stdout contains `- new: 1` (or whatever the fixture produces), stdout contains `### New findings`, stdout contains `| severity | package | version | finding-id | suggested action |`.
-  7. `New-findings table includes severity, package, version, finding-id, suggested action columns in that order` (`fixtures/md-fail-cve`). Asserts: the table header row matches the column ordering required by the issue acceptance criteria.
-  8. `Suggested action defaults to "investigate; accept or upgrade" for new findings` (`fixtures/md-fail-cve`). Asserts: stdout contains `investigate; accept or upgrade`.
+New step definitions to add (one per unique wording used by the feature file — cross-reference the feature to confirm final text):
 
-  **Expired-accepts section:**
-  9. `Expired-accepts section appears when expired-accept count > 0` (`fixtures/md-fail-expired-only`). Asserts: exit non-zero, stdout contains `### Expired accepts (`, stdout contains `re-evaluate or extend acceptance`, stdout does NOT contain `### New findings`.
-  10. `Expired-accepts section omitted when expired-accept count is zero` (`fixtures/md-fail-cve`). Asserts: stdout does NOT contain `### Expired accepts`.
+- **Given** steps describing fixture preparation:
+  - `Given a fixture Node repository at "{fixturePath}" whose manifests have no known CVEs` — clean-repo setup.
+  - `Given a fixture Node repository at "{fixturePath}" whose manifest pins a package with a known OSV CVE` — CVE-bearing setup.
+  - `Given a fixture Node repository at "{fixturePath}" whose manifest pins a package with a known OSV CVE that has a published fixed version "{version}"` — CVE-with-fix setup (the adapter's `fixedVersion` populates).
+  - `Given a fixture Node repository at "{fixturePath}" whose manifest pins a package with a known OSV CVE that has no published fixed version` — CVE-without-fix setup.
+  - `Given a fixture Node repository at "{fixturePath}" that produces exactly one OSV finding` — single-finding deterministic fixture.
+  - `Given the repository's osv-scanner.toml has an [[IgnoredVulns]] entry for that CVE's id with a valid ignoreUntil and a reason of at least 20 characters` — `accepted` classification wiring.
+  - `Given the repository's osv-scanner.toml has an [[IgnoredVulns]] entry for that CVE's id whose ignoreUntil lint-passes but is treated as expired by FindingMatcher at scan time` — expired-accept wiring (timing-trick).
+  - `Given the repository's .depaudit.yml has a valid supplyChainAccepts entry matching …` — accepted Socket finding.
+  - `Given the repository's .depaudit.yml has a commonAndFine entry matching … with a valid expiry` — whitelisted Socket finding.
+  - Given steps describing Socket mock behaviour: `responds with no alerts for every package`, `responds with an "install-scripts" alert for a package in that manifest`, `returns HTTP 503 for every request`, `returns HTTP 429 for every request`, `never responds within the client timeout`.
+  - `Given SOCKET_API_TOKEN is set to a valid test value`.
+  - `Given a fixture repository at "{fixturePath}" with the following manifests:` followed by a data table — polyglot setup.
 
-  **Supply-chain / OSV annotations:**
-  11. `Supply-chain-unavailable annotation appears when Socket falls open` (`fixtures/md-supply-chain-down`). Asserts: exit 0 (clean repo), stdout contains `> supply-chain unavailable`, stdout contains `Socket scan failed`.
-  12. `Supply-chain annotation omitted when Socket is healthy` (`fixtures/md-pass-clean`). Asserts: stdout does NOT contain `supply-chain unavailable`.
-  13. `OSV-unavailable annotation appears on OSV catastrophic failure` (`fixtures/md-osv-down`). Asserts: exit non-zero, stdout contains `> CVE scan unavailable`, stdout contains `OSV scanner failed`.
+- **When** steps (reuse `runDepaudit` from scan_steps.ts):
+  - `When I run "{cmd}"` — already defined; use.
+  - `When I run "{cmd}" and capture the markdown stdout as "{label}"` — capture a snapshot under a label into `DepauditWorld.capturedStdout[label]` for later byte-comparison.
 
-  **Mixed outcome:**
-  14. `Mixed outcome — new + expired + accepted + whitelisted counts all non-zero` (`fixtures/md-fail-mixed`). Asserts: stdout contains `### New findings`, stdout contains `### Expired accepts`, stdout contains all four count list items with non-zero values.
+- **Then** steps for markdown assertions:
+  - `Then stdout contains the HTML marker "{marker}"` — substring assertion on stdout.
+  - `Then stdout contains a markdown header indicating a passing gate` — assert stdout contains `## depaudit gate: PASS`.
+  - `Then stdout contains a markdown header indicating a failing gate` — assert stdout contains `## depaudit gate: FAIL`.
+  - `Then the markdown header reports counts of \`{counts}\`` — parse the backtick-quoted `new=N, accepted=N, whitelisted=N, expired=N` list and assert each corresponding `- <name>: <N>` line appears on stdout.
+  - `Then the markdown header reports a count of \`{count}\`` — single-count variant of the above.
+  - `Then stdout contains a markdown table titled "{title}"` — assert stdout contains `### {title}` followed (after optional blank line) by the pipe-delimited header row.
+  - `Then stdout does not contain a markdown table titled "{title}"` — negated form.
+  - `Then stdout contains a markdown section titled "{title}"` — substring of `### {title}`.
+  - `Then stdout does not contain a markdown section titled "{title}"` — negated form.
+  - `Then the "{table}" markdown table has the column headers "{h1}", "{h2}", "{h3}", "{h4}", "{h5}"` — parse the table under the named section, compare header row to the provided list.
+  - `Then the "{table}" markdown table has exactly one data row` — parse the table body row count.
+  - `Then that row contains the finding's package name, version, finding-id, and severity` — pull the fixture's expected finding values from world state and assert each appears in the single-row cells.
+  - `Then the "{table}" markdown table contains a row whose finding-id is "{id}"` — search table rows for the finding-id column value.
+  - `Then the "{table}" markdown table contains a row whose finding-id is the supply-chain alert type "{alertType}"` — same as above, keyed on Socket alert type.
+  - `Then the "{table}" markdown table row's "suggested action" cell mentions the fixed version "{version}"` — substring assertion on the suggested-action cell for the fixture's finding.
+  - `Then the "{table}" markdown table row's "suggested action" cell contains the text "{text}"` — substring assertion for the plain-text fallback.
+  - `Then the "{table}" markdown table row whose finding-id is "{id}" has a "suggested action" cell containing the text "{text}"` — combined finding-id + cell-content assertion.
+  - `Then the "{table}" markdown table contains at least one row whose package is declared in "{manifestPath}"` — polyglot assertion: cross-reference with fixture manifest parsing.
+  - `Then stdout contains a markdown annotation indicating supply-chain coverage is unavailable` — assert stdout contains `> supply-chain unavailable`.
+  - `Then stdout does not contain a markdown annotation indicating supply-chain coverage is unavailable` — negated form.
+  - `Then the markdown stdout captured as "{labelA}" is byte-identical to the markdown stdout captured as "{labelB}"` — `assert.strictEqual(world.capturedStdout[labelA], world.capturedStdout[labelB])`.
+  - `Then stderr mentions "{text}"` — substring assertion on `this.result!.stderr`. If already defined in scan_steps.ts, reuse.
 
-  **Marker placement:**
-  15. `HTML comment marker is present on every markdown emission` (covered by scenarios 1, 2, 5, 6, 11, 13, 14). Add as an explicit scenario to make the requirement greppable: clean repo (`fixtures/md-pass-clean`), assert marker exists exactly once on stdout.
+- Extend `DepauditWorld` (in `features/support/world.ts`) with a `capturedStdout: Record<string, string>` field to support snapshot-reproducibility scenarios. Initialise to `{}` in the constructor / Before hook.
 
-  **Stdout / stderr separation:**
-  16. `Markdown report goes to stdout; existing stderr lines (auto-prune, fail-open) remain on stderr` (`fixtures/md-supply-chain-down`). Asserts: stderr contains `socket: supply-chain unavailable` (existing stderr line), stdout contains `> supply-chain unavailable` (new markdown annotation). Both are present; the markdown annotation does not displace the stderr line.
-
-### Task 9 — Author `features/step_definitions/scan_markdown_reporter_steps.ts`
-
-- File imports: `Given/When/Then` from `@cucumber/cucumber`, `assert` from `node:assert/strict`, `DepauditWorld` from `../support/world.js`. Reuse `runDepaudit` from `./scan_steps.js` for any `When` steps not already defined.
-- New `Then` steps (only those not already defined elsewhere):
-  - `Then<DepauditWorld>("stdout includes the depaudit comment marker", function …)` — assert `result.stdout.includes("<!-- depaudit-gate-comment -->")`.
-  - `Then<DepauditWorld>("stdout does not include the depaudit comment marker", function …)` — complement.
-  - `Then<DepauditWorld>("stdout includes the markdown header {string}", function …, function (this, header) { assert.ok(this.result!.stdout.includes(header)); })` — generic header presence (`## depaudit gate: PASS` etc).
-  - `Then<DepauditWorld>("stdout includes a count line for {string} with value {int}", function …)` — asserts `- <name>: <n>` substring.
-  - `Then<DepauditWorld>("stdout includes the new-findings table header", function …)` — asserts `| severity | package | version | finding-id | suggested action |`.
-  - `Then<DepauditWorld>("stdout includes the expired-accepts section header", function …)` — asserts `### Expired accepts (`.
-  - `Then<DepauditWorld>("stdout includes the supply-chain-unavailable annotation", function …)` — asserts `> supply-chain unavailable`.
-  - `Then<DepauditWorld>("stdout includes the OSV-unavailable annotation", function …)` — asserts `> CVE scan unavailable`.
-  - `Then<DepauditWorld>("stderr mentions {string}", function …)` — asserts `result.stderr.includes(text)`. (If already defined elsewhere, skip; otherwise add.)
-- Reuse the existing `Then stdout mentions {string}` and `Then stdout does not mention {string}` from `scan_json_reporter_steps.ts` for substring assertions on annotation text.
-- Reuse existing exit-code, stdout-content, runDepaudit `When` steps.
-
-### Task 10 — Update documentation
+### Task 11 — Update documentation
 
 - Create `app_docs/feature-xgupjx-markdown-reporter.md` in the house style of `app_docs/feature-2rdowb-json-reporter.md`. Headings: Overview, What Was Built, Technical Implementation (Files Modified / Key Changes), How to Use, Configuration, Testing, Notes.
 - Append to `.adw/conditional_docs.md`:
@@ -503,7 +565,7 @@ All fixtures must include `.gitignore` with `.depaudit/` to suppress the JsonRep
   ```
 - Do NOT add a README.md section; the README is intentionally minimal (pre-release pointer to the PRD).
 
-### Task 11 — Run the validation suite
+### Task 12 — Run the validation suite
 
 Execute every command in **Validation Commands** below. All must pass with zero regressions.
 
@@ -521,18 +583,29 @@ Execute every command in **Validation Commands** below. All must pass with zero 
 Unit tests to build:
 
 - **`src/modules/__tests__/markdownReporter.test.ts`** covering:
-  - Marker and pass/fail header (Task 3, group 1)
+  - Marker and pass/fail header (Task 4, group 1)
   - Per-category count list (group 2)
-  - New-findings table emit conditions, header, sort order, default suggested action, custom hook (group 3)
+  - New-findings table emit conditions, header, sort order, default suggested action (with AND without `fixedVersion`), custom hook override (group 3)
   - Expired-accepts section emit conditions, default expired action (group 4)
   - Supply-chain / OSV annotations conditional emit (group 5)
   - Cell escapes for `|`, `\`, newlines (group 6)
   - Determinism and purity (group 7)
   - Fixture-file byte-comparison for every shape in `src/modules/__tests__/fixtures/markdown-output/` (group 8)
+- **`src/modules/__tests__/osvScannerAdapter.test.ts`** extended with coverage for `deriveFixedVersion`:
+  - Populates `Finding.fixedVersion` from a published `fixed` event.
+  - Leaves `fixedVersion` undefined when only `introduced` events are published.
+  - Leaves `fixedVersion` undefined when every published fix is ≤ the installed version.
+  - Selects the LOWEST qualifying fix when multiple ranges publish different fixes.
+  - Matches `affected[]` entries by OSV-ecosystem string (`npm`, `PyPI`, etc.), not by the mapped internal ecosystem.
 
 ### Edge Cases
 
 - **Empty classified findings.** Renderer emits header + counts (all zeros) + no tables + no annotations. Covered by `pass-empty.expected.md`.
+- **OSV publishes a fixed version.** `finding.fixedVersion` is populated; suggested action reads `upgrade <package> to >=<fixedVersion>`. Covered by `fail-new-with-fix.expected.md` and BDD scenario "Suggested action shows the OSV fixed-version recommendation when a fixed version is available".
+- **OSV has no published fix.** `finding.fixedVersion` is undefined; suggested action falls back to `"investigate; accept or upgrade"`. Covered by `fail-new-only.expected.md` and BDD scenario "Suggested action falls back to plain 'investigate; accept or upgrade' when no OSV fixed version is available".
+- **Socket supply-chain finding.** `finding.fixedVersion` never set (no OSV path); suggested action uses the plain-text fallback. Covered by BDD scenario "Suggested action for a Socket supply-chain finding is the plain-text fallback".
+- **OSV publishes multiple fixed versions across ranges.** `OsvScannerAdapter.deriveFixedVersion` picks the LOWEST fix strictly greater than the installed version. Unit-tested in `osvScannerAdapter.test.ts`.
+- **OSV publishes a fix that is ≤ installed version.** `deriveFixedVersion` skips it; `fixedVersion` stays undefined (treated as "no meaningful upgrade available"). Unit-tested.
 - **All four categories non-zero.** All counts non-zero, both tables present, no annotations. Covered by `fail-mixed.expected.md`.
 - **Only `expired-accept` non-zero (the contributor's worst-case "I didn't change anything but the gate failed").** Header is FAIL, only the expired-accepts table renders, no new-findings table. Covered by `fail-expired-only.expected.md`.
 - **Both `socketAvailable` and `osvAvailable` are false simultaneously.** Both annotations emitted, supply-chain first. Unit-tested explicitly.
@@ -553,11 +626,15 @@ Unit tests to build:
 ## Acceptance Criteria
 
 - [ ] `src/types/markdownReport.ts` defines `MARKDOWN_COMMENT_MARKER` and `MarkdownReportOptions`.
+- [ ] `src/types/finding.ts` has an optional `fixedVersion?: string` field on `Finding`.
+- [ ] `src/modules/osvScannerAdapter.ts` populates `Finding.fixedVersion` from OSV's `affected[].ranges[].events[]` when a `fixed` event publishes a version strictly greater than the installed version.
 - [ ] `src/modules/markdownReporter.ts` exports `renderMarkdownReport(result, options?): string` as a pure function.
 - [ ] `src/cli.ts` accepts `--format <markdown|text>` (also `-f`); default is `markdown`; unknown values exit 2 with a stderr message.
 - [ ] `src/commands/scanCommand.ts` accepts an `options.format` argument; defaults to `markdown`; routes through `MarkdownReporter` when `markdown` and `printFindings` when `text`.
 - [ ] Running `depaudit scan` (no `--format`) on a clean fixture writes the comment marker, the `## depaudit gate: PASS` header, and all four zero counts to stdout.
-- [ ] Running `depaudit scan --format markdown` on a CVE-bearing fixture emits the `## depaudit gate: FAIL` header, a `### New findings (n)` section, the table header `| severity | package | version | finding-id | suggested action |`, and one row per `new` finding with the default `investigate; accept or upgrade` suggested action.
+- [ ] Running `depaudit scan --format markdown` on a CVE-bearing fixture emits the `## depaudit gate: FAIL` header, a `### New findings (n)` section, the table header `| severity | package | version | finding-id | suggested action |`, and one row per `new` finding.
+- [ ] For `new` findings where OSV publishes a fixed version, the suggested-action cell renders `upgrade <package> to >=<fixedVersion>`.
+- [ ] For `new` findings where OSV has no published fix (or for Socket findings), the suggested-action cell renders the plain-text fallback `investigate; accept or upgrade`.
 - [ ] Running `depaudit scan --format markdown` on a fixture that produces only expired accepts emits the `### Expired accepts (n)` section with `re-evaluate or extend acceptance` and NO `### New findings` section.
 - [ ] Running `depaudit scan --format markdown` against a Socket fail-open emits `> supply-chain unavailable …` on stdout AND keeps the existing `socket: supply-chain unavailable …` line on stderr.
 - [ ] Running `depaudit scan --format markdown` after an OSV catastrophic failure emits `> CVE scan unavailable …` on stdout AND keeps the existing `osv: CVE scan failed catastrophically …` line on stderr.
@@ -592,10 +669,10 @@ Execute every command to validate the feature works correctly with zero regressi
 - **Existing BDD scenarios get a mechanical migration.** Every scenario whose assertions depend on `FINDING_LINE_RE` gets `--format text` appended to its `When I run "depaudit scan …"` step. Scenarios that assert only stderr / exit code / file state require no change. The migration is grep-able and reviewable in the PR diff.
 - **Stderr lines preserved in markdown mode.** `socket: supply-chain unavailable …`, `osv: CVE scan failed catastrophically …`, and `auto-prune: …` continue to fire on stderr in `--format markdown`. They are CI-log audit trails; the markdown annotations on stdout are the human-facing summary. Per-finding `expired accept: …` stderr lines are SUPPRESSED in markdown mode (the markdown's expired-accepts section subsumes them); they are kept in text mode.
 - **HTML marker is in the rendered output today even though no comment-update logic consumes it yet.** This avoids a future cross-slice rewrite and keeps the comment-update slice (likely tied to `StateTracker`) a pure addition rather than a marker-injection edit.
-- **Suggested-action placeholder strings.** `"investigate; accept or upgrade"` for new findings, `"re-evaluate or extend acceptance"` for expired accepts. Both are deliberate placeholders awaiting the upgrade-resolver slice. The `MarkdownReportOptions.suggestedActionFor` hook is exported now so the future slice is a content-only delta with no signature change.
+- **Suggested-action resolution order.** For `new` rows: (1) custom `options.suggestedActionFor` if provided, (2) `upgrade <package> to >=<fixedVersion>` when OSV publishes a fix, (3) `"investigate; accept or upgrade"` as plain-text fallback. For `expired-accept` rows: `"re-evaluate or extend acceptance"` (no fixed-version path — the acceptance already covered the CVE). The `MarkdownReportOptions.suggestedActionFor` hook remains exported for future consumers (per-org remediation playbooks, Socket-specific hints) to override without a signature change.
 - **Pass / fail wording uses ALL-CAPS `PASS` / `FAIL` rather than emoji.** Project convention: no emojis in source files unless explicitly requested. The capitalised word is the unambiguous status signal and renders correctly in any markdown viewer (GitHub, terminal renderers, plain text).
 - **Markdown emit ordering on stdout: report first, then JsonReporter gitignore warning if applicable.** Picking one stable order keeps snapshot tests deterministic. The warning is a single line and is still recognised by the existing `stdout mentions "gitignore"` assertion.
 - **No pagination / truncation for large finding counts.** A 1000-finding PR comment would be unwieldy but is also a far worse problem at the user / process level than a renderer concern. If needed, a future slice can add `--max-table-rows` or similar.
 - **JSON output to stdout is NOT introduced in this slice.** `--format json` is reserved (rejected by validation) but not implemented; the issue does not ask for it. JsonReporter's contract is the file at `.depaudit/findings.json`; stdout-JSON would be a separate, later concern.
 - **`--format` short flag is `-f`.** Matches POSIX convention. `parseArgs` exposes both forms.
-- **Coverage mapping.** User story 31 (PR comment with concrete next step) is addressed by the `### New findings` table with the suggested action column; the actual "concrete next step" content awaits the upgrade-resolver slice. PRD references `:190-193, :204, :229, :241` are satisfied by Tasks 1–5 (types + renderer + tests + wiring) and Task 8 (BDD coverage).
+- **Coverage mapping.** User story 31 (PR comment with concrete next step) is addressed by the `### New findings` table's suggested-action column, which renders the OSV-published fixed version as `upgrade <package> to >=<fixedVersion>` when available and the plain-text fallback otherwise. PRD references `:190-193, :204, :229, :241` are satisfied by Tasks 1–6 (types + OSV-fix derivation + renderer + tests + CLI + wiring) and Task 9 (BDD coverage).
