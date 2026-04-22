@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "sourceAvailability": {
+    "osv": false,
+    "socket": true
+  },
+  "findings": [
+    {
+      "package": "ms",
+      "version": "2.1.3",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "deprecated",
+      "severity": "MEDIUM",
+      "summary": "deprecated detected",
+      "classification": "new",
+      "source": "socket",
+      "upgradeSuggestion": null
+    },
+    {
+      "package": "lodash",
+      "version": "4.17.20",
+      "ecosystem": "npm",
+      "manifestPath": "/repo/package-lock.json",
+      "findingId": "install-scripts",
+      "severity": "HIGH",
+      "summary": "install-scripts detected",
+      "classification": "new",
+      "source": "socket",
+      "upgradeSuggestion": null
+    }
+  ]
+}

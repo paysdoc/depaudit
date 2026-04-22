@@ -77,7 +77,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     And a mock Socket API that responds with no alerts for every package
     When I run "depaudit scan fixtures/json-manifest-path"
     Then the exit code is non-zero
-    And ".depaudit/findings.json" in "fixtures/json-manifest-path" contains at least one entry whose `manifestPath` ends with "package.json"
+    And ".depaudit/findings.json" in "fixtures/json-manifest-path" contains at least one entry whose `manifestPath` ends with "package-lock.json"
 
   @adw-8
   Scenario: Each entry's `ecosystem` matches the manifest ecosystem
