@@ -45,7 +45,7 @@ src/
     lintCommand.ts       # LintCommand composition root
   modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, ConfigLoader, Linter, etc.)
     __tests__/           # Unit tests with fixture data
-  types/                 # Shared domain types (Finding, Manifest, OsvScannerConfig)
+  types/                 # Shared domain types (Finding, Manifest, ScanResult, DepauditConfig, OsvScannerConfig)
 .env.sample              # Environment variable template
 UBIQUITOUS_LANGUAGE.md   # Domain glossary
 cucumber.js              # Cucumber e2e runner config
