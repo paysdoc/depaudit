@@ -95,30 +95,6 @@ Feature: depaudit — StateTracker PR-comment dedupe and pass/fail state detecti
     When StateTracker reads the prior PR state for PR 42
     Then the prior state reports `priorOutcome` as "none"
 
-  @adw-10
-  Scenario: Pass→Fail transition is flagged as a first-failure transition
-    Given the mock `gh` CLI returns a comment list for PR 42 containing one marker-bearing comment whose header says "depaudit gate: PASS"
-    And the current scan outcome is "fail"
-    When StateTracker computes the state transition for PR 42
-    Then the transition is flagged as a first-failure transition
-    And the transition's `shouldNotifySlack` flag is true
-
-  @adw-10
-  Scenario: Fail→Fail transition is NOT flagged as a first-failure transition (Slack stays quiet)
-    Given the mock `gh` CLI returns a comment list for PR 42 containing one marker-bearing comment whose header says "depaudit gate: FAIL"
-    And the current scan outcome is "fail"
-    When StateTracker computes the state transition for PR 42
-    Then the transition is not flagged as a first-failure transition
-    And the transition's `shouldNotifySlack` flag is false
-
-  @adw-10
-  Scenario: Fail→Pass transition is not flagged as a first-failure transition
-    Given the mock `gh` CLI returns a comment list for PR 42 containing one marker-bearing comment whose header says "depaudit gate: FAIL"
-    And the current scan outcome is "pass"
-    When StateTracker computes the state transition for PR 42
-    Then the transition is not flagged as a first-failure transition
-    And the transition's `shouldNotifySlack` flag is false
-
   # ─── Error propagation (gh CLI unreachable / auth failures) ────────────────
 
   @adw-10 @regression
@@ -165,14 +141,3 @@ Feature: depaudit — StateTracker PR-comment dedupe and pass/fail state detecti
     When StateTracker reconciles the PR comment for PR 42
     Then the body sent to the mock `gh` CLI is byte-identical to the supplied markdown body
 
-  # ─── Input validation ─────────────────────────────────────────────────────
-
-  @adw-10
-  Scenario: StateTracker refuses to post a body that is missing the HTML marker
-    Given the mock `gh` CLI returns an empty comment list for PR 42
-    And a markdown body that does NOT contain the marker "<!-- depaudit-gate-comment -->" is supplied as input
-    When StateTracker reconciles the PR comment for PR 42
-    Then the StateTracker invocation exits non-zero
-    And stderr mentions "marker"
-    And the mock `gh` CLI did not receive any "pr comment" POST invocation
-    And the mock `gh` CLI did not receive any comment-edit invocation

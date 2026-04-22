@@ -17,7 +17,7 @@ This slice introduces both pieces:
 
 - **A `templates/depaudit-gate.yml` workflow** (pre-release fixture bundled with the npm package). The workflow triggers on `pull_request`, installs Node LTS, installs depaudit globally via `npm install -g depaudit`, runs `depaudit scan` capturing its markdown stdout to a file, invokes a new `depaudit post-pr-comment` subcommand that manages the PR comment, and exits with the scan's original exit code so Actions correctly shows the PR check as failed when the gate fails. The workflow itself is just a fixture file in this slice — `DepauditSetupCommand` (issue #11) will later copy it from `templates/` into each target repo's `.github/workflows/`. To keep the fixture directly exercisable, a companion unit test parses the YAML, asserts the required jobs/steps are present, and asserts `on: pull_request` is configured.
 
-- **A `StateTracker` deep module** — pure logic from "what PR comments exist now + what markdown body do I want to post" to "create a new comment with this body OR edit comment ID N with this body". Identifies the depaudit comment by its `<!-- depaudit-gate-comment -->` marker (already in every `MarkdownReporter` emission since issue #9). Stateless per-call; state comes in via the comment list argument. Unit-tested with mocked comment lists across empty / one-marker / multi-marker / many-marker-free permutations.
+- **A `StateTracker` deep module** — pure logic that performs two distinct reads over an incoming PR comment list: (a) *detects the pass/fail state* carried by the prior depaudit-gate comment (if any) by looking for a `depaudit gate: PASS` / `depaudit gate: FAIL` header in the marker-bearing comment's body, and (b) *decides whether to post-new vs update-in-place* by finding the first comment whose body contains the `<!-- depaudit-gate-comment -->` marker. Identifies the depaudit comment by that same marker (already in every `MarkdownReporter` emission since issue #9). Stateless per-call; state comes in via the comment list argument. Unit-tested with mocked comment lists across empty / one-marker / multi-marker / many-marker-free permutations as well as PASS-header / FAIL-header / no-header permutations.
 
 - **A `GhPrCommentClient` deep module** — thin boundary over the `gh` CLI. `listPrComments`, `createPrComment`, `updatePrComment`. Mockable via an injectable `execFile` function, same pattern as `OsvScannerAdapter`. Takes GitHub coordinates (repo, PR number) and the markdown body; returns structured results (list of `PrComment`, created comment ID) so `StateTracker`'s pure output can drive it.
 
@@ -140,7 +140,7 @@ Introduce four new pieces of code + one template file + BDD coverage, organised 
   4. If multiple comments carry the marker (e.g., a prior buggy run created two), return an update action for the FIRST one — the second will be left orphaned. Document this in a `// NB:` comment and in the unit tests; cleanup of extra marker-bearing comments is a future concern.
   5. No I/O. No mutation of inputs. Frozen input returns are not mutated.
 
-  The `StateTracker` module exports a single pure function today; the PRD's broader "tracks PR-level state across scan runs" vision (including first-failure Slack dedupe) is intentionally narrowed to the comment-dedupe use case for this slice. The module file is named to accept future additions (`decideSlackAction`, etc.) without a rename.
+  The `StateTracker` module exports two pure functions today — `decideCommentAction` (post-new vs update-in-place) and `readPriorState` (detect the prior scan's pass/fail from the existing comment body). Together they cover the issue's "detects pass/fail state, and decides whether to post-new vs update-in-place" mandate. The PRD's broader "tracks PR-level state across scan runs" vision (including *first-failure Slack dedupe* — i.e., computing pass→fail transitions and deciding whether to fire a Slack notification) is intentionally deferred to a later slice (likely tied to `SlackReporter`). The module file is named to accept future additions (`decideSlackAction`, `computeTransition`, etc.) without a rename.
 
 - **New `src/modules/ghPrCommentClient.ts`** — deep module that wraps `gh`. Same injectable-execFile pattern as `OsvScannerAdapter`:
 
@@ -311,7 +311,7 @@ Expose the composition root as a CLI subcommand, author the workflow template th
 
 Execute every step in order, top to bottom.
 
-### Task 1 — Define `PrComment` + `CommentAction` types
+### Task 1 — Define `PrComment` + `CommentAction` + `PriorState` types
 
 - Create `src/types/prComment.ts`:
   ```ts
@@ -329,14 +329,22 @@ Execute every step in order, top to bottom.
   export type CommentAction =
     | { kind: "create"; body: string }
     | { kind: "update"; commentId: number; body: string };
+
+  export type PriorOutcome = "pass" | "fail" | "none";
+
+  export interface PriorState {
+    priorOutcome: PriorOutcome;
+    commentId?: number;  // set when a marker-bearing comment exists, regardless of outcome
+  }
   ```
 - No behaviour. Pure type export.
+- `PriorOutcome` is `"pass" | "fail" | "none"`. `"none"` covers both "no marker-bearing comment" and "marker-bearing comment without a recognisable PASS/FAIL header" (e.g., a prior buggy run wrote a comment with the marker but an unreadable header); conflating the two keeps the caller logic simple and is safe because downstream decisions in this slice only branch on "prior state exists" — future slices that need finer granularity can split the type.
 
 ### Task 2 — Implement `src/modules/stateTracker.ts`
 
 - New file.
-- Imports: `PrComment`, `CommentAction` from `../types/prComment.js`; `MARKDOWN_COMMENT_MARKER` from `../types/markdownReport.js`.
-- Single export:
+- Imports: `PrComment`, `CommentAction`, `PriorState` from `../types/prComment.js`; `MARKDOWN_COMMENT_MARKER` from `../types/markdownReport.js`.
+- Two pure exports:
   ```ts
   export function decideCommentAction(
     comments: PrComment[],
@@ -351,13 +359,32 @@ Execute every step in order, top to bottom.
     }
     return { kind: "create", body: newBody };
   }
+
+  export function readPriorState(comments: PrComment[]): PriorState {
+    // Find the first depaudit-gate comment; then classify its body by the
+    // "depaudit gate: PASS" / "depaudit gate: FAIL" header that MarkdownReporter
+    // always writes (see src/modules/markdownReporter.ts).
+    const existing = comments.find((c) => c.body.includes(MARKDOWN_COMMENT_MARKER));
+    if (!existing) return { priorOutcome: "none" };
+    if (existing.body.includes("depaudit gate: PASS")) {
+      return { priorOutcome: "pass", commentId: existing.id };
+    }
+    if (existing.body.includes("depaudit gate: FAIL")) {
+      return { priorOutcome: "fail", commentId: existing.id };
+    }
+    // Marker-bearing but no recognisable header — treat as "none" but preserve
+    // the commentId so the caller can still dedupe the update.
+    return { priorOutcome: "none", commentId: existing.id };
+  }
   ```
 - No I/O. No mutation of inputs.
+- `readPriorState` and `decideCommentAction` share the same marker-lookup logic but are kept as separate exports because their callers compose them independently: the comment-posting composition root only calls `decideCommentAction`; a future Slack-dedupe composition root will call `readPriorState` without needing an action decision. Factoring out a private `findGateComment(comments)` helper is a valid refactor as the second caller lands; in this slice the duplication is cheap and keeps each function trivially inspectable.
 
 ### Task 3 — Unit-test `stateTracker`
 
 - New file: `src/modules/__tests__/stateTracker.test.ts`.
-- Vitest. Scenarios:
+- Vitest. Two `describe` blocks — one per exported function.
+- `describe("decideCommentAction")` scenarios:
   1. Empty comment list returns a `"create"` action with the passed body verbatim.
   2. One marker-bearing comment returns an `"update"` action with that comment's id.
   3. Marker appears mid-body (not at line 0) — still found.
@@ -367,7 +394,16 @@ Execute every step in order, top to bottom.
   7. The returned `body` field equals the `newBody` argument byte-for-byte.
   8. Calling the function twice with the same inputs returns equal outputs (purity).
   9. Input `comments` array is not mutated (assert via deep-clone comparison pre/post).
-- Snapshot tests are not used here — the function is a one-line decision; explicit assertions are clearer.
+- `describe("readPriorState")` scenarios:
+  1. Empty comment list returns `{ priorOutcome: "none" }` (no `commentId`).
+  2. Marker-bearing comment whose body contains `depaudit gate: PASS` returns `{ priorOutcome: "pass", commentId: <id> }`.
+  3. Marker-bearing comment whose body contains `depaudit gate: FAIL` returns `{ priorOutcome: "fail", commentId: <id> }`.
+  4. Marker-bearing comment with neither PASS nor FAIL header returns `{ priorOutcome: "none", commentId: <id> }` (commentId is preserved so future callers can still dedupe).
+  5. Multiple marker-bearing comments — the FIRST one's header decides the outcome; the others are ignored.
+  6. Comments without the marker are skipped even if they happen to contain `depaudit gate: PASS` (e.g., a human contributor pasted that string).
+  7. Calling the function twice with the same inputs returns equal outputs (purity).
+  8. Input `comments` array is not mutated (deep-clone comparison pre/post).
+- Snapshot tests are not used here — both functions are short deterministic decisions; explicit assertions are clearer.
 
 ### Task 4 — Implement `src/modules/ghPrCommentClient.ts`
 
@@ -898,14 +934,15 @@ Unit tests to build:
 
 - [ ] `templates/depaudit-gate.yml` exists, parses as valid YAML, and contains the documented jobs/steps structure.
 - [ ] `package.json` has a `"files": ["dist", "templates"]` entry so the template ships with `npm install -g depaudit`.
-- [ ] `src/types/prComment.ts` defines `PrComment`, `PrCoordinates`, `CommentAction`.
+- [ ] `src/types/prComment.ts` defines `PrComment`, `PrCoordinates`, `CommentAction`, `PriorOutcome`, `PriorState`.
 - [ ] `src/modules/stateTracker.ts` exports a pure `decideCommentAction(comments, newBody)` returning a `CommentAction`.
+- [ ] `src/modules/stateTracker.ts` exports a pure `readPriorState(comments)` that returns `{ priorOutcome: "pass" | "fail" | "none", commentId? }`, detecting the prior pass/fail state from the `depaudit gate: PASS` / `depaudit gate: FAIL` header inside the marker-bearing comment.
 - [ ] `src/modules/ghPrCommentClient.ts` exports `listPrComments`, `createPrComment`, `updatePrComment`, `GhApiError`, with injectable `execFile`.
 - [ ] `src/commands/postPrCommentCommand.ts` exports `runPostPrCommentCommand(options)` that resolves repo/PR from flags or env, composes StateTracker with GhPrCommentClient, returns the documented exit-code table.
 - [ ] `src/cli.ts` accepts the `post-pr-comment` subcommand with `--body-file`, `--pr`, `--repo` flags and is documented in the USAGE string.
 - [ ] Running `depaudit post-pr-comment --body-file=<md>` against a fresh PR posts a new comment; a second invocation against the same PR updates the prior comment in place.
 - [ ] Five consecutive invocations on the same PR produce exactly one create + four updates; the PR carries exactly one depaudit gate comment at the end.
-- [ ] `StateTracker` unit tests cover empty / single-marker / multi-marker / marker-free / marker-mid-body cases with mocked comment lists.
+- [ ] `StateTracker` unit tests cover empty / single-marker / multi-marker / marker-free / marker-mid-body cases with mocked comment lists, and — for `readPriorState` — empty / PASS-header / FAIL-header / header-absent / multi-marker permutations.
 - [ ] `GhPrCommentClient` unit tests cover happy / error / empty / pagination-passthrough / temp-file-lifecycle paths.
 - [ ] `postPrCommentCommand` integration tests cover the first-run-creates, second-run-updates, five-run-balance, missing-env-vars, and body-file-validation paths.
 - [ ] `depauditGateYml.test.ts` parses `templates/depaudit-gate.yml` and asserts every documented structural invariant.
@@ -940,7 +977,7 @@ Sanity checks (optional but recommended):
 
 - **No new runtime dependencies expected.** The YAML template validation piggybacks on the existing `yaml` package already used for `ConfigLoader`. `gh` is installed on all GitHub-hosted runners by default, so the workflow template assumes its presence without an install step.
 - **Unit tests override.** `.adw/project.md` lacks `## Unit Tests: enabled`. This plan includes unit + integration tests because the issue's acceptance criteria explicitly demand them AND `.adw/review_proof.md` requires mock-boundary tests for any subprocess-wrapping module. Same precedent as issues #3–#9 and #13.
-- **StateTracker scope is narrow for this slice.** The PRD's broader vision includes "first-failure Slack dedupe" — that's a later slice (likely tied to `SlackReporter`). This slice lands the comment-dedupe primitive (`decideCommentAction`) and leaves room to add sibling exports (`decideSlackAction`, etc.) to the same file without a rename.
+- **StateTracker scope for this slice.** Issue #10 mandates two StateTracker capabilities: (a) detect prior pass/fail state from the existing comment body, and (b) decide post-new vs update-in-place. Both land here (`readPriorState` + `decideCommentAction`). The PRD's broader vision also includes "first-failure Slack dedupe" — computing pass→fail transitions and deciding whether to fire a Slack notification. Those transition-computing functions are NOT in issue #10's scope and are deferred to a later slice (likely tied to `SlackReporter`). This slice leaves room to add sibling exports (`decideSlackAction`, `computeTransition`, etc.) to the same file without a rename.
 - **Template branch pinning is a future concern.** The issue/PRD reference "pinned to the resolved trigger branch." The template authored here is *generic* — it uses `${{ github.event.pull_request.base.ref }}` implicitly (via the trigger being `pull_request`) and doesn't bake a branch name. When `DepauditSetupCommand` (issue #11) copies the template into a target repo, it may optionally rewrite the `on:` block to pin `branches: [main]` or `branches: [<resolved-trigger-branch>]`. That rewrite is issue #11's concern; this slice leaves a working template that's correct by default on any repo.
 - **Marker false positives.** `StateTracker` treats any comment containing `<!-- depaudit-gate-comment -->` as the prior depaudit gate comment. A contributor pasting that literal string into a PR comment will get their comment overwritten on the next gate run. The marker is deliberately weird-looking to minimise collision; if a user reports collision in practice, a future slice can tighten the match (e.g., "first-line-must-be-the-marker" or "author-must-be-the-github-actions-bot").
 - **Exit-code propagation is workflow-level, not CLI-level.** `depaudit post-pr-comment` always exits with its own status (0/1/2) regardless of whether the scan passed or failed — the markdown body it posts already carries the pass/fail signal. The workflow's third step (`Propagate scan exit code`) is the only place the scan's exit code becomes the job's exit code.

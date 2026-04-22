@@ -109,17 +109,12 @@ Feature: depaudit — packaged depaudit-gate.yml workflow template
     When I read the packaged `depaudit-gate.yml` template
     Then the PR-comment step's environment includes a GITHUB_TOKEN secret reference
 
-  # ─── Secrets wired (SOCKET_API_TOKEN, SLACK_WEBHOOK_URL) ───────────────────
+  # ─── Secrets wired (SOCKET_API_TOKEN) ──────────────────────────────────────
 
   @adw-10 @regression
   Scenario: The `depaudit scan` step forwards SOCKET_API_TOKEN from the repo's secrets
     When I read the packaged `depaudit-gate.yml` template
     Then the `depaudit scan` step's environment includes a SOCKET_API_TOKEN secret reference
-
-  @adw-10
-  Scenario: The workflow references SLACK_WEBHOOK_URL so first-failure Slack notification can fire
-    When I read the packaged `depaudit-gate.yml` template
-    Then the workflow references a SLACK_WEBHOOK_URL secret
 
   # ─── Explicitly NOT SARIF / Code Scanning (user story 32) ──────────────────
 
@@ -141,11 +136,3 @@ Feature: depaudit — packaged depaudit-gate.yml workflow template
     When I read the packaged `depaudit-gate.yml` template
     Then the workflow's `on.pull_request` block does not restrict to a single hard-coded target branch
 
-  # ─── DepauditSetupCommand copies the template into target repos ────────────
-
-  @adw-10
-  Scenario: DepauditSetupCommand copies the packaged template to .github/workflows/depaudit-gate.yml in the target repo
-    Given a fixture Node repository at "fixtures/gate-setup-copies-workflow" with no existing `.github/workflows/` directory
-    When DepauditSetupCommand runs against "fixtures/gate-setup-copies-workflow"
-    Then the file ".github/workflows/depaudit-gate.yml" exists in "fixtures/gate-setup-copies-workflow"
-    And the file ".github/workflows/depaudit-gate.yml" in "fixtures/gate-setup-copies-workflow" is byte-identical to the packaged template
