@@ -56,7 +56,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     When I run "depaudit scan fixtures/json-cve-schema"
     Then the exit code is non-zero
     And ".depaudit/findings.json" in "fixtures/json-cve-schema" is valid JSON
-    And every entry in ".depaudit/findings.json" `findings` array has the fields `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `classification`, `source`
+    And every entry in ".depaudit/findings.json" `findings` array has the fields `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `summary`, `classification`, `source`
     And ".depaudit/findings.json" in "fixtures/json-cve-schema" contains at least one entry whose `source` is "osv"
 
   @adw-8 @regression
@@ -67,7 +67,7 @@ Feature: depaudit scan — JsonReporter writes classified findings to .depaudit/
     When I run "depaudit scan fixtures/json-sca-schema"
     Then the exit code is non-zero
     And ".depaudit/findings.json" in "fixtures/json-sca-schema" is valid JSON
-    And every entry in ".depaudit/findings.json" `findings` array has the fields `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `classification`, `source`
+    And every entry in ".depaudit/findings.json" `findings` array has the fields `package`, `version`, `ecosystem`, `manifestPath`, `findingId`, `severity`, `summary`, `classification`, `source`
     And ".depaudit/findings.json" in "fixtures/json-sca-schema" contains at least one entry whose `source` is "socket" and `findingId` is "install-scripts"
 
   @adw-8
