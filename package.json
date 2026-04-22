@@ -16,6 +16,10 @@
   },
   "keywords": ["security", "audit", "cve", "supply-chain", "osv", "socket"],
   "license": "MIT",
+  "files": [
+    "dist",
+    "templates"
+  ],
   "devDependencies": {
     "@cucumber/cucumber": "^12.8.1",
     "@types/node": "^22.0.0",

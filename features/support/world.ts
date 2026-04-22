@@ -42,6 +42,12 @@ export class DepauditWorld extends World {
   fakeOsvBinDir?: string;
   /** Captured stdout snapshots keyed by label — used by @adw-9 snapshot-reproducibility scenarios */
   capturedStdout: Record<string, string> = {};
+  /** Mocked gh binary handle for @adw-10 scenarios */
+  ghMock?: import("./mockGhBinary.js").MockGhHandle;
+  /** Body file path for post-pr-comment (@adw-10) */
+  bodyFilePath?: string;
+  /** Resolved prior state from readPriorState (@adw-10) */
+  priorState?: import("../../src/types/prComment.js").PriorState;
 
   constructor(options: IWorldOptions) {
     super(options);

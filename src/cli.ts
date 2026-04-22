@@ -11,17 +11,28 @@ const USAGE = `
 Usage: depaudit <command> [options]
 
 Commands:
-  scan [path]   Scan a Node repository for CVE findings (default path: cwd)
-  lint [path]   Lint osv-scanner.toml (default path: cwd)
+  scan [path]            Scan a Node repository for CVE findings (default path: cwd)
+  lint [path]            Lint osv-scanner.toml (default path: cwd)
+  post-pr-comment        Post or update a depaudit gate comment on a PR
 
 Options:
-  -h, --help     Print this help message and exit
-  -v, --version  Print the version and exit
-  -f, --format   Output format for stdout (markdown|text; default: markdown)
+  -h, --help             Print this help message and exit
+  -v, --version          Print the version and exit
+  -f, --format           Output format for stdout (markdown|text; default: markdown)
+      --body-file        Path to the markdown body (post-pr-comment)
+      --pr               PR number (post-pr-comment; defaults to pull_request event)
+      --repo             GitHub repo as owner/name (post-pr-comment; defaults to GITHUB_REPOSITORY)
 `.trimStart();
 
 async function main(): Promise<void> {
-  let values: { help?: boolean; version?: boolean; format?: string };
+  let values: {
+    help?: boolean;
+    version?: boolean;
+    format?: string;
+    "body-file"?: string;
+    pr?: string;
+    repo?: string;
+  };
   let positionals: string[];
 
   try {
@@ -31,11 +42,21 @@ async function main(): Promise<void> {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         format: { type: "string", short: "f" },
+        "body-file": { type: "string" },
+        pr: { type: "string" },
+        repo: { type: "string" },
       },
       allowPositionals: true,
       strict: true,
     });
-    values = parsed.values as { help?: boolean; version?: boolean; format?: string };
+    values = parsed.values as {
+      help?: boolean;
+      version?: boolean;
+      format?: string;
+      "body-file"?: string;
+      pr?: string;
+      repo?: string;
+    };
     positionals = parsed.positionals;
   } catch (err: unknown) {
     process.stderr.write(`error: ${(err as Error).message}\n\n${USAGE}`);
@@ -75,6 +96,37 @@ async function main(): Promise<void> {
   } else if (subcommand === "lint") {
     try {
       const code = await runLintCommand(cmdPath ?? process.cwd());
+      process.exit(code);
+    } catch (err: unknown) {
+      process.stderr.write(`error: ${(err as Error).message}\n`);
+      process.exit(2);
+    }
+  } else if (subcommand === "post-pr-comment") {
+    const bodyFile = values["body-file"];
+    if (!bodyFile) {
+      process.stderr.write(`error: --body-file is required\n\n${USAGE}`);
+      process.exit(2);
+    }
+    let prNumber: number | undefined;
+    if (values.pr) {
+      const n = Number(values.pr);
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        process.stderr.write(
+          `error: --pr must be an integer, got '${values.pr}'\n\n${USAGE}`
+        );
+        process.exit(2);
+      }
+      prNumber = n;
+    }
+    try {
+      const { runPostPrCommentCommand } = await import(
+        "./commands/postPrCommentCommand.js"
+      );
+      const code = await runPostPrCommentCommand({
+        bodyFile,
+        repo: values.repo,
+        prNumber,
+      });
       process.exit(code);
     } catch (err: unknown) {
       process.stderr.write(`error: ${(err as Error).message}\n`);

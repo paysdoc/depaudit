@@ -1,0 +1,49 @@
+name: depaudit-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install osv-scanner
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install depaudit
+        run: npm install -g depaudit
+
+      - name: Run depaudit scan
+        id: scan
+        env:
+          SOCKET_API_TOKEN: ${{ secrets.SOCKET_API_TOKEN }}
+        run: |
+          set +e
+          depaudit scan > depaudit-comment.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Post or update PR comment
+        if: "always() && github.event_name == 'pull_request'"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: depaudit post-pr-comment --body-file=depaudit-comment.md
+
+      - name: Propagate scan exit code
+        if: always()
+        run: exit ${{ steps.scan.outputs.exit_code }}
