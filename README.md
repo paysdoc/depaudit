@@ -43,9 +43,15 @@ src/
   commands/
     scanCommand.ts       # ScanCommand composition root
     lintCommand.ts       # LintCommand composition root
-  modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, ConfigLoader, Linter, etc.)
+    postPrCommentCommand.ts  # PostPrCommentCommand composition root
+  modules/               # Deep modules (ManifestDiscoverer, OsvScannerAdapter, ConfigLoader, Linter,
+                         #   FindingMatcher, StateTracker, GhPrCommentClient, JsonReporter,
+                         #   MarkdownReporter, SocketApiClient, OrphanDetector, ConfigWriter, etc.)
     __tests__/           # Unit tests with fixture data
-  types/                 # Shared domain types (Finding, Manifest, ScanResult, DepauditConfig, OsvScannerConfig)
+  types/                 # Shared domain types (Finding, Manifest, ScanResult, DepauditConfig,
+                         #   OsvScannerConfig, PrComment, MarkdownReport, etc.)
+templates/
+  depaudit-gate.yml      # GitHub Actions gate workflow template (copied by depaudit setup)
 .env.sample              # Environment variable template
 UBIQUITOUS_LANGUAGE.md   # Domain glossary
 cucumber.js              # Cucumber e2e runner config
