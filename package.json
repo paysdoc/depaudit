@@ -1,5 +1,5 @@
 {
-  "name": "depaudit",
+  "name": "@paysdoc/depaudit",
   "version": "1.0.0",
   "description": "Polyglot dependency audit gate CLI",
   "type": "module",
