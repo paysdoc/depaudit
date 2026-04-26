@@ -2,24 +2,40 @@
 
 Polyglot dependency audit gate. Scans every manifest in a repo for CVEs (via OSV.dev) and supply-chain risk (via Socket.dev), classifies findings against a committed, time-limited acceptance list, and fails CI when new or expired findings exist.
 
-## Status
-
-Pre-release. See [specs/prd/depaudit.md](specs/prd/depaudit.md) for the full design.
-
-Work is tracked in this repo's [Issues](https://github.com/paysdoc/depaudit/issues). Slice numbering comes from the PRD's tracer-bullet breakdown.
-
-## Setup
-
-Copy `.env.sample` to `.env` and fill in your credentials:
+## Install
 
 ```sh
-cp .env.sample .env
+npm install -g @paysdoc/depaudit
 ```
 
-| Variable | Description |
-|---|---|
-| `SOCKET_API_TOKEN` | Socket.dev API token for supply-chain risk scanning |
-| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL for gate failure notifications |
+depaudit shells out to [`osv-scanner`](https://google.github.io/osv-scanner/installation/) for CVE scanning, so that binary must also be on `PATH`.
+
+## Getting Started
+
+In the root of the repo you want to gate:
+
+```sh
+depaudit setup
+```
+
+This will:
+
+- Scaffold `.depaudit.yml`, `osv-scanner.toml`, and `.github/workflows/depaudit-gate.yml`
+- Run a baseline scan and record current findings as accepted (so existing issues don't fail the first CI run)
+- Commit the scaffold to your trigger branch, or open a PR if it's protected
+
+Subsequent CI runs will fail the gate whenever new or expired findings appear.
+
+## Configuration
+
+depaudit reads the following from the environment of the process running the scan (typically your CI job):
+
+| Variable | Required | Description |
+|---|---|---|
+| `SOCKET_API_TOKEN` | Yes | Socket.dev API token. Without it the gate fails with exit code 2. Get one at https://socket.dev. |
+| `SLACK_WEBHOOK_URL` | No | Slack Incoming Webhook for first-failure-per-PR notifications. If unset, Slack reporting is silently skipped. |
+
+If the Socket API is unreachable or rate-limits during a scan, depaudit fails open: it logs `socket: supply-chain unavailable` to stderr and gates on CVE findings only. The token must still be present.
 
 ## Domain Language
 
