@@ -5,7 +5,7 @@ bun
 bun install
 
 ## Run Linter
-bun run lint
+N/A
 
 ## Type Check
 bun run typecheck

@@ -43,3 +43,7 @@ bun add {library}
 
 ## Script Execution
 bun run {script}
+
+## Agent Guardrails
+
+ADW copied a starter deny-only guardrail file into this repo at `.claude/settings.json` during initialization, since none existed. It denies recursive-force `rm`, force-push, and reading `.env*` files. It is the repo owner's to edit or delete. Its `Read(!**/.env.sample)` / `Read(!**/.env.example)` negation carve-outs rely on UNDOCUMENTED Claude Code CLI precedence behavior; the framework verifies this with `scripts/guardrails-probe.ts` (issue #762). Re-run the probe after each Claude Code CLI upgrade to confirm the carve-outs still hold.
