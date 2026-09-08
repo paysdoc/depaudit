@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-08
+
+### Fixed
+
+- Scaffolded `depaudit-gate.yml` now installs the published scoped package `@paysdoc/depaudit` instead of the non-existent unscoped `depaudit`, which 404'd on the npm registry and broke the install step on every repo bootstrapped by `depaudit setup`.
+- `configWriter` baseline tests no longer pin an absolute expiry date, so they don't rot as the linter's expiry enforcement catches up to them.
+
 ## [1.0.0] - 2026-04-26
 
 Initial public release.
@@ -23,4 +30,5 @@ Initial public release.
 - `depaudit setup` command: baseline generation and commit-or-PR executor (#26).
 - Orphan auto-prune in `ScanCommand` with fail-open guard (#20).
 
+[1.0.1]: https://github.com/paysdoc/depaudit/releases/tag/v1.0.1
 [1.0.0]: https://github.com/paysdoc/depaudit/releases/tag/v1.0.0

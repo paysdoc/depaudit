@@ -67,7 +67,7 @@ Feature: depaudit — packaged depaudit-gate.yml workflow template
   @adw-10 @regression
   Scenario: The workflow installs depaudit globally via npm install -g
     When I read the packaged `depaudit-gate.yml` template
-    Then at least one `run` step in the depaudit-gate job contains "npm install -g depaudit"
+    Then at least one `run` step in the depaudit-gate job contains "npm install -g @paysdoc/depaudit"
 
   @adw-10 @regression
   Scenario: The workflow runs `depaudit scan` against the repository
