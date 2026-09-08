@@ -11,7 +11,7 @@ N/A
 bun run typecheck
 
 ## Run Tests
-bun test
+bun run test
 
 ## Run Build
 bun run build

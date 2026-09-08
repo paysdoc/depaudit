@@ -176,7 +176,9 @@ describe("pruneOsvScannerToml", () => {
 
 // ─── appendDepauditYmlBaseline ────────────────────────────────────────────────
 
-const BASELINE_EXPIRES = "2026-07-21";
+// Computed relative to now: the linter rejects expiry dates in the past and
+// beyond the 90-day cap, so a hardcoded date turns into a time bomb.
+const BASELINE_EXPIRES = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const BASELINE_REASON = "baselined at install";
 
 describe("appendDepauditYmlBaseline", () => {
@@ -256,7 +258,7 @@ describe("appendOsvScannerTomlBaseline", () => {
     const dir = await mkdtemp(join(tmpdir(), "depaudit-cw-test-"));
     const path = await makeEmptyToml(dir);
     const n = await appendOsvScannerTomlBaseline(path, [
-      { id: "CVE-2024-0001", ignoreUntil: "2026-07-21", reason: BASELINE_REASON },
+      { id: "CVE-2024-0001", ignoreUntil: BASELINE_EXPIRES, reason: BASELINE_REASON },
     ]);
     expect(n).toBe(1);
     const content = await readFile(path, "utf8");
@@ -269,8 +271,8 @@ describe("appendOsvScannerTomlBaseline", () => {
     const dir = await mkdtemp(join(tmpdir(), "depaudit-cw-test-"));
     const path = await makeEmptyToml(dir);
     const n = await appendOsvScannerTomlBaseline(path, [
-      { id: "CVE-A", ignoreUntil: "2026-07-21", reason: BASELINE_REASON },
-      { id: "CVE-B", ignoreUntil: "2026-07-21", reason: BASELINE_REASON },
+      { id: "CVE-A", ignoreUntil: BASELINE_EXPIRES, reason: BASELINE_REASON },
+      { id: "CVE-B", ignoreUntil: BASELINE_EXPIRES, reason: BASELINE_REASON },
     ]);
     expect(n).toBe(2);
     const content = await readFile(path, "utf8");
@@ -283,7 +285,7 @@ describe("appendOsvScannerTomlBaseline", () => {
   it("is idempotent: appending same id twice returns 0 on second call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "depaudit-cw-test-"));
     const path = await makeEmptyToml(dir);
-    const entry = { id: "CVE-2024-0002", ignoreUntil: "2026-07-21", reason: BASELINE_REASON };
+    const entry = { id: "CVE-2024-0002", ignoreUntil: BASELINE_EXPIRES, reason: BASELINE_REASON };
     await appendOsvScannerTomlBaseline(path, [entry]);
     const contentAfterFirst = await readFile(path, "utf8");
     const n = await appendOsvScannerTomlBaseline(path, [entry]);
@@ -304,7 +306,7 @@ describe("appendOsvScannerTomlBaseline", () => {
     const dir = await mkdtemp(join(tmpdir(), "depaudit-cw-test-"));
     const path = await makeEmptyToml(dir);
     await appendOsvScannerTomlBaseline(path, [
-      { id: "CVE-2024-ROUND", ignoreUntil: "2026-07-21", reason: BASELINE_REASON },
+      { id: "CVE-2024-ROUND", ignoreUntil: BASELINE_EXPIRES, reason: BASELINE_REASON },
     ]);
     const config = await loadOsvScannerConfig(dir);
     expect(config.ignoredVulns).toHaveLength(1);

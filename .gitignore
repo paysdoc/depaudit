@@ -3,6 +3,9 @@ node_modules/
 .env
 .depaudit/
 
+# ADW: git worktrees checked out during runs
+.worktrees/
+
 # ADW: copied slash commands (do not commit)
 .claude/commands/adw_init.md
 .claude/commands/align_plan_scenarios.md
