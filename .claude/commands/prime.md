@@ -9,5 +9,4 @@ git ls-files
 
 ## Read
 README.md
-adws/README.md
-.claude/commands/conditional_docs.md - this is a guide for you to determine which documentation to read based on the upcoming task.
+.adw/conditional_docs.md - this is a guide for you to determine which documentation to read based on the upcoming task.
