@@ -71,6 +71,7 @@ describe("runOsvScanner", () => {
       "scan",
       "source",
       "--format=json",
+      "--no-ignore",
       "/proj/packages/a",
       "/proj/packages/b",
     ]);

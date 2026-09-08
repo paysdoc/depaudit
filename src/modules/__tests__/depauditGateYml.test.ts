@@ -65,11 +65,11 @@ describe("templates/depaudit-gate.yml", () => {
     expect(hasSetupNode).toBe(true);
   });
 
-  it("has a step that runs npm install -g depaudit", () => {
+  it("has a step that runs npm install -g @paysdoc/depaudit", () => {
     const steps = wf.jobs?.gate?.steps ?? [];
     const hasInstall = steps.some(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (s: any) => typeof s.run === "string" && s.run.includes("npm install -g depaudit")
+      (s: any) => typeof s.run === "string" && s.run.includes("npm install -g @paysdoc/depaudit")
     );
     expect(hasInstall).toBe(true);
   });

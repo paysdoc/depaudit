@@ -37,3 +37,10 @@ node_modules/
 .claude/commands/track_agentic_kpis.md
 .claude/commands/validate_plan_scenarios.md
 .adw/.regen-receipt
+# ADW: copied slash commands (do not commit)
+.claude/commands/promote_regression_vocabulary.md
+.claude/commands/validate_scenario_fidelity.md
+.claude/skills/depaudit-triage/
+.claude/skills/promote-regression-vocabulary/
+.claude/skills/refactor/
+.claude/skills/write-a-skill/

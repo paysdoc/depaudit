@@ -4,12 +4,16 @@ import { readFile, access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Given, When, Then } from "@cucumber/cucumber";
 import assert from "node:assert/strict";
-import { DepauditWorld, PROJECT_ROOT, CLI_PATH } from "../support/world.js";
+import { DepauditWorld, PROJECT_ROOT, CLI_PATH, STEP_TIMEOUT_MS } from "../support/world.js";
 import { startMockSocketServer } from "../support/mockSocketServer.js";
 
 const execFileAsync = promisify(execFile);
 
 const FINDING_LINE_RE = /^(\S+)\s+(\S+)\s+(\S+)\s+(UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL)$/;
+
+// Kill the CLI just before Cucumber abandons the step, so a hung scan fails with the
+// child's captured output instead of a bare "function timed out" carrying nothing.
+const CHILD_TIMEOUT_MS = Math.max(5_000, STEP_TIMEOUT_MS - 5_000);
 
 // ─── Background ─────────────────────────────────────────────────────────────
 
@@ -130,14 +134,17 @@ export async function runDepaudit(world: DepauditWorld, args: string[]): Promise
     env["PATH"] = `${world.ghMock.binDir}:${existingPath}`;
   }
 
-  // For scenarios that don't configure socket (e.g. regression tests), if no
-  // SOCKET_API_TOKEN is available in env, spin up a no-op mock so the CLI
-  // doesn't fail with SocketAuthError and break non-socket scenarios.
+  // Scenarios that don't configure Socket explicitly (e.g. regression tests)
+  // always run against a no-op mock. The mock is used even when the ambient
+  // environment carries a real SOCKET_API_TOKEN: the ADW host has one for
+  // `depaudit setup`, and forwarding it here pointed the whole regression
+  // suite at the live Socket.dev API, burning rate limit and making the run
+  // non-deterministic. Scenarios that want a real or specific token set
+  // world.socketToken / world.socketMockUrl themselves.
   let fallbackMock: Awaited<ReturnType<typeof startMockSocketServer>> | undefined;
   const needsFallback =
     world.socketToken === undefined &&
-    world.socketMockUrl === undefined &&
-    !env["SOCKET_API_TOKEN"];
+    world.socketMockUrl === undefined;
   if (needsFallback) {
     fallbackMock = await startMockSocketServer({ body: [] });
     env["SOCKET_API_BASE_URL"] = fallbackMock.url;
@@ -145,12 +152,25 @@ export async function runDepaudit(world: DepauditWorld, args: string[]): Promise
   }
 
   try {
-    const result = await execFileAsync("node", [CLI_PATH, ...args], { cwd: world.cwd, env });
+    const result = await execFileAsync("node", [CLI_PATH, ...args], {
+      cwd: world.cwd,
+      env,
+      timeout: CHILD_TIMEOUT_MS,
+    });
     stdout = result.stdout;
     stderr = result.stderr;
     exitCode = 0;
   } catch (err: unknown) {
-    const e = err as { code?: number | string; stdout?: string; stderr?: string };
+    const e = err as { code?: number | string; killed?: boolean; signal?: string; stdout?: string; stderr?: string };
+    // A killed child never produced a real exit code; reporting it as exit 1 would let
+    // "the exit code is non-zero" pass on a scan that never finished.
+    if (e.killed) {
+      throw new Error(
+        `depaudit ${args.join(" ")} was killed before it exited ` +
+          `(code ${String(e.code)}, signal ${e.signal ?? "none"}, child timeout ${CHILD_TIMEOUT_MS}ms)\n` +
+          `stdout:\n${e.stdout ?? ""}\nstderr:\n${e.stderr ?? ""}`
+      );
+    }
     exitCode = typeof e.code === "number" ? e.code : 1;
     stdout = e.stdout ?? "";
     stderr = e.stderr ?? "";

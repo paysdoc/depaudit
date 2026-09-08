@@ -49,7 +49,7 @@
     - src/modules/manifestDiscoverer.ts
     - src/modules/osvScannerAdapter.ts
   - Conditions:
-    - When working on `ManifestDiscoverer`, `OsvScannerAdapter`, or the `Ecosystem` type; when adding a new manifest type or ecosystem; when troubleshooting missing manifests in polyglot repos, build-directory bleed-through, or unknown OSV ecosystem errors; when scanning non-npm repos (pip, gomod, cargo, maven, gem, composer)
+    - When working on `ManifestDiscoverer`, `OsvScannerAdapter`, or the `Ecosystem` type; when adding a new manifest type or ecosystem; when troubleshooting missing manifests in polyglot repos, build-directory bleed-through, or unknown OSV ecosystem errors; when scanning non-npm repos (pip, gomod, cargo, maven, gem, composer); when working on the `osv-scanner` CLI invocation flags (e.g. `--no-ignore`) or troubleshooting scans that report zero findings for a path excluded by an ancestor `.gitignore`
 
 - [app_docs/feature-kteamd-socketapiclient-supply-chain.md](../app_docs/feature-kteamd-socketapiclient-supply-chain.md)
   - Owns:
@@ -90,8 +90,11 @@
     - src/modules/stateTracker.ts
     - src/modules/ghPrCommentClient.ts
     - src/commands/postPrCommentCommand.ts
+    - templates/depaudit-gate.yml
+    - src/modules/__tests__/depauditGateYml.test.ts
+    - features/depaudit_gate_workflow.feature
   - Conditions:
-    - When working on the `.github/workflows/depaudit-gate.yml` template, `StateTracker`, `GhPrCommentClient`, the `depaudit post-pr-comment` subcommand, single-comment-in-place PR behaviour, or `GH_TOKEN` / `GITHUB_EVENT_PATH` resolution; when troubleshooting missing-or-duplicated gate comments; when extending the workflow to add Slack first-failure dedupe in a future slice
+    - When working on the `templates/depaudit-gate.yml` template (including the packaged `npm install -g @paysdoc/depaudit` step), `StateTracker`, `GhPrCommentClient`, the `depaudit post-pr-comment` subcommand, single-comment-in-place PR behaviour, or `GH_TOKEN` / `GITHUB_EVENT_PATH` resolution; when troubleshooting missing-or-duplicated gate comments, or a gate whose install step 404s because the published package name changed; when extending the workflow to add Slack first-failure dedupe in a future slice
 
 - [app_docs/feature-2sm4zt-slack-reporter-state-tracker-transitions.md](../app_docs/feature-2sm4zt-slack-reporter-state-tracker-transitions.md)
   - Owns:

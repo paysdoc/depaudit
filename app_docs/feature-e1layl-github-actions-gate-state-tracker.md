@@ -1,89 +1,24 @@
 # GitHub Actions depaudit-gate.yml + PR comment + StateTracker
 
-**ADW ID:** e1layl-github-actions-depau
-**Date:** 2026-04-22
-**Issue:** #10
-
 ## Overview
 
-This slice delivers the CI gate integration for depaudit. It ships a `templates/depaudit-gate.yml` GitHub Actions workflow template, a `StateTracker` module for deterministic PR-comment deduplication, a `GhPrCommentClient` module wrapping the `gh` CLI, and a `depaudit post-pr-comment` subcommand that composes them. Every target repo onboarded by `DepauditSetupCommand` (issue #11) immediately gets a working gate that fails the Actions check on gate failure, posts a single updated-in-place PR comment, and propagates the scan's exit code correctly.
+Delivers the CI gate integration for depaudit: a `templates/depaudit-gate.yml` GitHub Actions workflow template bundled with the npm package, a `StateTracker` module for deterministic PR-comment deduplication, a `GhPrCommentClient` wrapping the `gh` CLI, and a `depaudit post-pr-comment` subcommand that composes them. Every target repo onboarded by `depaudit setup` gets a working gate that fails the Actions check on gate failure and posts a single updated-in-place PR comment.
 
-## What Was Built
+## Responsibilities
 
-- `templates/depaudit-gate.yml` — GitHub Actions workflow template bundled with the npm package
-- `src/types/prComment.ts` — `PrComment`, `PrCoordinates`, `CommentAction`, `PriorOutcome`, `PriorState` types
-- `src/modules/stateTracker.ts` — pure `decideCommentAction` and `readPriorState` functions
-- `src/modules/ghPrCommentClient.ts` — `listPrComments`, `createPrComment`, `updatePrComment`, `GhApiError` with injectable `execFile`
-- `src/commands/postPrCommentCommand.ts` — composition root for `post-pr-comment` subcommand
-- `src/modules/__tests__/stateTracker.test.ts` — 16 unit tests
-- `src/modules/__tests__/ghPrCommentClient.test.ts` — 11 unit tests
-- `src/modules/__tests__/depauditGateYml.test.ts` — 14 structural assertions on the template
-- `src/commands/__tests__/postPrCommentCommand.test.ts` — 10 integration tests
-- `features/support/mockGhBinary.ts` — spawned mock `gh` binary for BDD scenarios
-- `features/step_definitions/depaudit_gate_workflow_steps.ts` — step defs for workflow template assertions
-- `features/step_definitions/state_tracker_steps.ts` — step defs for StateTracker BDD scenarios
-- `fixtures/gh-body/depaudit-comment.md` — reference markdown body fixture
+- `templates/depaudit-gate.yml` installs the published package (`npm install -g @paysdoc/depaudit`), runs `depaudit scan`, and posts/updates a PR comment via `depaudit post-pr-comment`, all inside one job
+- `decideCommentAction(comments, newBody)` in `src/modules/stateTracker.ts` walks the PR's comment list for the first comment containing the marker `<!-- depaudit-gate-comment -->`; returns `{ kind: "update", commentId, body }` if found, else `{ kind: "create", body }`
+- `readPriorState(comments)` inspects the same marker comment for `"depaudit gate: PASS"` / `"depaudit gate: FAIL"` text, exported for a future Slack first-failure-dedupe slice (not yet consumed by `postPrCommentCommand`)
+- `GhPrCommentClient` (`listPrComments`, `createPrComment`, `updatePrComment`) wraps the `gh` CLI with an injectable `execFile`, mirroring the `OsvScannerAdapter` pattern; the comment body is delivered via a temp file (`--field body=@<path>`) since `promisify(execFile)` doesn't expose stdin
+- `postPrCommentCommand` is the composition root for the `post-pr-comment` subcommand: resolves PR number from `--pr` or `GITHUB_EVENT_PATH`, resolves repo from `--repo` or `GITHUB_REPOSITORY`, and calls `decideCommentAction` + the client
 
-## Technical Implementation
+## Contracts & Invariants
 
-### Files Modified
-
-- `src/cli.ts`: added `post-pr-comment` subcommand with `--body-file`, `--pr`, `--repo` flags; updated USAGE string
-- `package.json`: added `"files": ["dist", "templates"]` so template ships with `npm install -g depaudit`
-- `features/support/world.ts`: added `ghMock`, `bodyFilePath`, `priorState` fields
-
-### Key Changes
-
-**StateTracker (`src/modules/stateTracker.ts`):**
-
-`decideCommentAction(comments, newBody)` walks the comment list for the first comment containing `MARKDOWN_COMMENT_MARKER`. If found, returns `{ kind: "update", commentId, body: newBody }`. Otherwise `{ kind: "create", body: newBody }`. If multiple marker-bearing comments exist (bug-legacy state), the first one wins; the rest are orphaned.
-
-`readPriorState(comments)` uses the same marker lookup to detect prior pass/fail: checks for `"depaudit gate: PASS"` or `"depaudit gate: FAIL"` in the marker comment body.
-
-**GhPrCommentClient (`src/modules/ghPrCommentClient.ts`):**
-
-Mirrors the `OsvScannerAdapter` injectable-execFile pattern. Body is delivered via a temp file (`--field body=@<path>`) since `promisify(execFile)` doesn't expose stdin. Temp dir is cleaned up in a `finally` block on both success and error paths.
-
-**postPrCommentCommand (`src/commands/postPrCommentCommand.ts`):**
-
-Exit-code contract:
-- 0 — success (posted or updated)
-- 1 — gh API failure (`GhApiError`)
-- 2 — invalid arguments (missing body file, missing repo, missing PR number)
-
-Resolves PR number from `--pr` flag → `GITHUB_EVENT_PATH` event JSON (supports both `pull_request.number` and `number` shapes). Does NOT resolve to exit 0 silently — a missing PR number is always exit 2.
-
-**Workflow template (`templates/depaudit-gate.yml`):**
-
-The "Propagate scan exit code" step is intentionally separate from the scan step. This ensures:
-1. The post-pr-comment step always runs (even on scan failure) via `if: always()`
-2. The job fails when the scan fails — the exit code propagates correctly
-
-Exit-code threading: `set +e` → capture `$?` → `GITHUB_OUTPUT` → `exit ${{ steps.scan.outputs.exit_code }}`.
-
-## How to Use
-
-The template is designed to be copied into a target repo by `DepauditSetupCommand` (issue #11). After copying:
-
-```yaml
-# .github/workflows/depaudit-gate.yml (in target repo)
-# — generated by depaudit setup —
-name: depaudit-gate
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-...
-```
-
-Invoke `post-pr-comment` directly:
-
-```bash
-# Reads GITHUB_REPOSITORY and GITHUB_EVENT_PATH from env automatically
-depaudit post-pr-comment --body-file=depaudit-comment.md
-
-# Or pass flags explicitly
-depaudit post-pr-comment --body-file=out.md --repo=owner/repo --pr=42
-```
+- Exit codes for `post-pr-comment`: `0` success (posted or updated), `1` `gh` API failure (`GhApiError`), `2` invalid arguments (missing body file, missing repo, or missing PR number — never silently resolved to 0)
+- The workflow's "Propagate scan exit code" step is separate from the scan step so `post-pr-comment` always runs (`if: always()`) while the job still fails when the scan fails; exit-code threading is `set +e` → capture `$?` → `GITHUB_OUTPUT` → `exit ${{ steps.scan.outputs.exit_code }}`
+- If multiple marker-bearing comments exist on a PR (legacy state), the first one found wins and the rest are orphaned
+- The install step names the published package explicitly (`@paysdoc/depaudit`, not the unscoped `depaudit`, which 404s on the registry) and is intentionally unpinned — it always pulls `latest`
+- `GH_TOKEN` auth is implicit: the workflow passes `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` as an env var and the `gh` CLI picks it up automatically; `ghPrCommentClient.ts` never reads it directly
 
 ## Configuration
 
@@ -96,24 +31,11 @@ depaudit post-pr-comment --body-file=out.md --repo=owner/repo --pr=42
 | `GITHUB_REPOSITORY` | `owner/repo` of the current repo | set by Actions automatically |
 | `GITHUB_EVENT_PATH` | Path to the Actions event JSON | set by Actions automatically |
 
-## Testing
+`permissions: pull-requests: write` is required in the workflow for `GITHUB_TOKEN` to post/edit PR comments without a PAT.
 
-```bash
-# Unit tests
-bun test
+## Gotchas
 
-# E2E BDD scenarios
-bun run test:e2e -- --tags "@adw-10"
-
-# Regression suite (includes @adw-10 scenarios)
-bun run test:e2e -- --tags "@regression"
-```
-
-## Notes
-
-- **`lts/*` for Node version**: auto-tracks the current LTS line. Future slice may pin to a specific major.
-- **`permissions: pull-requests: write`**: required for `GITHUB_TOKEN` to post/edit PR comments without a PAT.
-- **gh auth is implicit**: the workflow passes `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` as an env var. The `gh` CLI picks this up automatically — `ghPrCommentClient.ts` never reads it directly.
-- **SARIF not populated**: User Story 32 is honoured by omission — no `codeql-action/upload-sarif` or `actions/upload-sarif` steps appear in the template.
-- **StateTracker scope**: `readPriorState` is exported for future use by the Slack first-failure dedupe slice. The current `postPrCommentCommand` only calls `decideCommentAction`.
-- **Marker false positives**: any comment whose body contains `<!-- depaudit-gate-comment -->` is treated as the prior gate comment. The marker is deliberately obscure to minimise collision.
+- The install step in the shipped template must track the currently published package name — it was renamed from unscoped `depaudit` to `@paysdoc/depaudit`; a stale template ships a gate whose first step 404s on every PR in every repo bootstrapped by `depaudit setup`. `src/modules/__tests__/depauditGateYml.test.ts` and the `@adw-10 @regression` scenario in `features/depaudit_gate_workflow.feature` both pin this literal and must move together with the template
+- SARIF is not populated — no `codeql-action/upload-sarif` step appears in the template
+- `lts/*` is used for the Node version in the workflow, so it auto-tracks the current LTS line rather than a pinned major
+- The marker `<!-- depaudit-gate-comment -->` is deliberately obscure to minimise collision with unrelated PR comments; any comment whose body happens to contain it is treated as the prior gate comment

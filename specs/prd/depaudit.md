@@ -104,7 +104,7 @@ An ADW-only Claude Code skill, **`/depaudit-triage`**, walks a maintainer throug
 
 ### Stack & Architecture
 
-- **CLI distribution**: `depaudit` is a Node/Bun CLI published to npm. `npm install -g depaudit` works on any runner with Node installed.
+- **CLI distribution**: `depaudit` is a Node/Bun CLI published to npm. `npm install -g @paysdoc/depaudit` works on any runner with Node installed.
 - **Findings sources**: Two. OSV-Scanner (Go binary invoked as a subprocess) for CVE coverage across all supported ecosystems; Socket.dev REST API for supply-chain signals where Socket has coverage (npm, PyPI, and a subset of others). Trivy is deliberately *not* used — OSV-Scanner's native `IgnoredVulns` with `ignoreUntil` already provides the expiring-allowlist behavior and Trivy would duplicate CVE findings.
 - **Graceful degradation**: For ecosystems that Socket doesn't cover (e.g., Cargo, Maven in some configurations), the scan still produces CVE findings via OSV; the supply-chain section is simply absent for those packages.
 - **Socket failure mode**: Fail open. A Socket API error (timeout, 5xx, rate-limit) causes depaudit to skip supply-chain findings for that run and annotate the PR comment with "supply-chain unavailable." OSV-based CVE gating continues normally.

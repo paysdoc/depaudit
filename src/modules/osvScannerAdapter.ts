@@ -121,7 +121,12 @@ export async function runOsvScanner(
 
   const dirs = [...new Set(manifests.map((m) => dirname(m.path)))].sort();
 
-  const args = ["scan", "source", "--format=json"];
+  // `--no-ignore`: manifest scoping is owned by manifestDiscoverer, which already
+  // applies the scanned repo's own .gitignore. Left to its default, osv-scanner
+  // re-applies ignore rules — including .gitignore files in *ancestor* directories
+  // outside the repo — and silently reports zero findings for a fully-ignored path
+  // (e.g. a checkout under a gitignored `.worktrees/`), turning the gate green.
+  const args = ["scan", "source", "--format=json", "--no-ignore"];
   if (overrideConfigFile !== undefined) {
     args.push("--config", overrideConfigFile);
   }
