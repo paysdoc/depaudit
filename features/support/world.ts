@@ -5,9 +5,16 @@ import { fileURLToPath } from "node:url";
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const CLI_PATH = resolve(PROJECT_ROOT, "dist/cli.js");
 
-// `depaudit scan` shells out to `osv-scanner`, which routinely takes 2–4s per
-// invocation and can spike past Cucumber's 5s default under load.
-setDefaultTimeout(30_000);
+// Every `I run "depaudit …"` step spawns the CLI, which shells out to `osv-scanner`
+// and queries the live OSV.dev API. On an idle machine the regression suite averages
+// ~1s per scenario (slowest ~5s), but the ADW and CI hosts run it alongside other
+// work: a full run there measured ~22s per scenario — ~24x slower — with bursts in
+// which consecutive scans blew past a 30s ceiling. Those surfaced as bare
+// "function timed out" failures carrying no stdout/stderr, so the cap has to be a
+// backstop against a genuinely hung subprocess, not a de-facto performance
+// assertion on a contended host. Override with DEPAUDIT_BDD_STEP_TIMEOUT_MS.
+export const STEP_TIMEOUT_MS = Number(process.env.DEPAUDIT_BDD_STEP_TIMEOUT_MS) || 120_000;
+setDefaultTimeout(STEP_TIMEOUT_MS);
 
 export interface RunResult {
   exitCode: number;
