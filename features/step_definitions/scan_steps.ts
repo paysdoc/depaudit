@@ -130,14 +130,17 @@ export async function runDepaudit(world: DepauditWorld, args: string[]): Promise
     env["PATH"] = `${world.ghMock.binDir}:${existingPath}`;
   }
 
-  // For scenarios that don't configure socket (e.g. regression tests), if no
-  // SOCKET_API_TOKEN is available in env, spin up a no-op mock so the CLI
-  // doesn't fail with SocketAuthError and break non-socket scenarios.
+  // Scenarios that don't configure Socket explicitly (e.g. regression tests)
+  // always run against a no-op mock. The mock is used even when the ambient
+  // environment carries a real SOCKET_API_TOKEN: the ADW host has one for
+  // `depaudit setup`, and forwarding it here pointed the whole regression
+  // suite at the live Socket.dev API, burning rate limit and making the run
+  // non-deterministic. Scenarios that want a real or specific token set
+  // world.socketToken / world.socketMockUrl themselves.
   let fallbackMock: Awaited<ReturnType<typeof startMockSocketServer>> | undefined;
   const needsFallback =
     world.socketToken === undefined &&
-    world.socketMockUrl === undefined &&
-    !env["SOCKET_API_TOKEN"];
+    world.socketMockUrl === undefined;
   if (needsFallback) {
     fallbackMock = await startMockSocketServer({ body: [] });
     env["SOCKET_API_BASE_URL"] = fallbackMock.url;

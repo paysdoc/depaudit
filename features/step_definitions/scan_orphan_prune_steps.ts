@@ -65,6 +65,19 @@ function buildScaYml(accepts: Array<{ pkg: string; version: string; findingId: s
   return lines.join("\n") + "\n";
 }
 
+/**
+ * Re-anchor every acceptance expiry in a fixture file to a date relative to this
+ * run. The committed fixtures pin a fixed date, which silently slips into the past
+ * as time passes; the scan then exits non-zero on the expired accept rather than on
+ * the behaviour under test. The After hook restores the original file either way.
+ */
+function refreshExpiryDates(content: string): string {
+  const future = futureDateStr(60);
+  return content
+    .replace(/(expires:\s*")\d{4}-\d{2}-\d{2}(")/g, `$1${future}$2`)
+    .replace(/(ignoreUntil\s*=\s*)\d{4}-\d{2}-\d{2}/g, `$1${future}`);
+}
+
 /** Read and snapshot fixture files before test, restore after. */
 async function snapshotFile(world: DepauditWorld, filePath: string): Promise<void> {
   if (!world.originalFileContents) {
@@ -131,12 +144,14 @@ Given<DepauditWorld>(
     // Snapshot original file before we (possibly) overwrite
     const ymlPath = join(this.fixturePath, ".depaudit.yml");
     await snapshotFile(this, ymlPath);
-    // The fixture already has this entry pre-committed — just verify it's there
+    // The fixture already has this entry pre-committed — keep it, but re-anchor its expiry
     try {
       const content = await readFile(ymlPath, "utf8");
       if (!content.includes(pkg)) {
         // Write it if it's not there (for cases where step is declarative)
         await writeFile(ymlPath, buildScaYml([{ pkg, version, findingId: "install-scripts" }]), "utf8");
+      } else {
+        await writeFile(ymlPath, refreshExpiryDates(content), "utf8");
       }
     } catch {
       await writeFile(ymlPath, buildScaYml([{ pkg, version, findingId: "install-scripts" }]), "utf8");
@@ -149,7 +164,7 @@ Given<DepauditWorld>(
   async function (this: DepauditWorld, cveId: string) {
     const tomlPath = join(this.fixturePath, "osv-scanner.toml");
     await snapshotFile(this, tomlPath);
-    // The fixture already has this entry pre-committed — just verify it's there
+    // The fixture already has this entry pre-committed — keep it, but re-anchor its expiry
     try {
       const content = await readFile(tomlPath, "utf8");
       if (!content.includes(cveId)) {
@@ -161,6 +176,8 @@ Given<DepauditWorld>(
           "",
         ].join("\n");
         await writeFile(tomlPath, tomlContent, "utf8");
+      } else {
+        await writeFile(tomlPath, refreshExpiryDates(content), "utf8");
       }
     } catch {
       const tomlContent = [
