@@ -33,3 +33,4 @@ node_modules/
 .claude/commands/tools.md
 .claude/commands/track_agentic_kpis.md
 .claude/commands/validate_plan_scenarios.md
+.adw/.regen-receipt
