@@ -4,7 +4,7 @@
   "description": "Polyglot dependency audit gate CLI",
   "type": "module",
   "bin": {
-    "depaudit": "./dist/cli.js"
+    "depaudit": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
